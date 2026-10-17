@@ -42,14 +42,14 @@
 {% endif %}
 
 <div class="grid" style="margin-top:14px">
-  <form class="panel" method="post" action="/wallet/return">
+  <form class="panel" id="return" method="post" action="/wallet/return">
     <h2>Return to Pool</h2>
     <input type="hidden" name="team_id" value="{{ team.id }}">
     <input type="hidden" name="key" value="{{ key }}">
     <label>Amount (USD)</label><input name="amount" value="25.00" inputmode="decimal">
     <div class="actions"><button type="submit">Return Credit</button></div>
   </form>
-  <form class="panel" method="post" action="/wallet/request">
+  <form class="panel" id="request" method="post" action="/wallet/request">
     <h2>Request from Pool</h2>
     <input type="hidden" name="team_id" value="{{ team.id }}">
     <input type="hidden" name="key" value="{{ key }}">

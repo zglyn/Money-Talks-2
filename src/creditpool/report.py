@@ -19,6 +19,35 @@ class TeamRow:
 
 
 @dataclass(frozen=True)
+class ProgramPulse:
+    """Time to expiry plus surplus and dry Teams for one Program.
+
+    A non-pool Team is surplus when Available Balance is above zero, and dry when
+    it is at or below zero. Available Balance already subtracts active Reservations.
+    The Program Pool is neither.
+    """
+
+    seconds_to_expiry: int
+    surplus_teams: tuple[int, ...]
+    dry_teams: tuple[int, ...]
+    return_href: str
+    request_href: str
+    offer_href: str = "/trades"
+
+    @property
+    def surplus_count(self) -> int:
+        return len(self.surplus_teams)
+
+    @property
+    def dry_count(self) -> int:
+        return len(self.dry_teams)
+
+    @property
+    def expiry_label(self) -> str:
+        return _expiry_label(self.seconds_to_expiry)
+
+
+@dataclass(frozen=True)
 class ProgramView:
     id: int
     name: str
@@ -28,11 +57,51 @@ class ProgramView:
     expires_at: float
     expired: bool
     returns_allowed: bool
+    pulse: ProgramPulse
     teams: list[TeamRow] = field(default_factory=list)
 
     @property
     def remaining_cents(self) -> int:
         return self.total_budget_cents - self.used_cents
+
+
+def _expiry_label(seconds: int) -> str:
+    if seconds <= 0:
+        return "Expired"
+    days, rem = divmod(seconds, 86_400)
+    hours, rem = divmod(rem, 3_600)
+    minutes, _ = divmod(rem, 60)
+    parts: list[str] = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes or not parts:
+        parts.append(f"{minutes}m")
+    return " ".join(parts)
+
+
+def _wallet_href(team_id: int | None, anchor: str) -> str:
+    if team_id is None:
+        return f"/wallet#{anchor}"
+    return f"/wallet?team_id={team_id}#{anchor}"
+
+
+def program_pulse(teams: list[TeamRow], expires_at: float, now: float) -> ProgramPulse:
+    members = [t for t in teams if not t.is_pool]
+    surplus = [t for t in members if t.available_cents > 0]
+    dry = [t for t in members if t.available_cents <= 0]
+    return_team = max(surplus, key=lambda t: (t.available_cents, -t.id), default=None)
+    request_team = min(dry, key=lambda t: (t.available_cents, t.id), default=None)
+    return_id = None if return_team is None else return_team.id
+    request_id = None if request_team is None else request_team.id
+    return ProgramPulse(
+        seconds_to_expiry=max(0, int(expires_at - now)),
+        surplus_teams=tuple(t.id for t in surplus),
+        dry_teams=tuple(t.id for t in dry),
+        return_href=_wallet_href(return_id, "return"),
+        request_href=_wallet_href(request_id, "request"),
+    )
 
 
 def _operation_net(conn: sqlite3.Connection, team_id: int) -> int:
@@ -87,6 +156,7 @@ def programs(conn: sqlite3.Connection, now: float | None = None) -> list[Program
             used_cents=money.program_total(conn, p["id"]),
             per_team_cap_cents=p["per_team_cap_cents"], expires_at=p["expires_at"],
             expired=t >= p["expires_at"], returns_allowed=bool(p["returns_allowed"]), teams=teams,
+            pulse=program_pulse(teams, p["expires_at"], t),
         ))
     return views
 

@@ -23,6 +23,37 @@
   </div>
   <p class="muted">Expires {{ p.expires_at|when }} · Returns {{ "allowed" if p.returns_allowed else "disabled" }}</p>
   {% if report.program_mismatches(p) %}<p class="bad">Program total exceeds budget.</p>{% endif %}
+
+  <section class="program-pulse" data-program-id="{{ p.id }}"
+           data-seconds-to-expiry="{{ p.pulse.seconds_to_expiry }}"
+           data-surplus-team-ids="{{ p.pulse.surplus_teams|join(',') }}"
+           data-dry-team-ids="{{ p.pulse.dry_teams|join(',') }}">
+    <h2>Program pulse</h2>
+    <div class="grid">
+      <div class="stat">
+        <div class="label">Time to expiry</div>
+        <div class="value">{{ p.pulse.expiry_label }}</div>
+        <div class="muted" style="margin-top:6px">{{ p.pulse.seconds_to_expiry }} seconds</div>
+      </div>
+      <div class="stat">
+        <div class="label">Surplus Teams</div>
+        <div class="value">{{ p.pulse.surplus_count }}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Dry Teams</div>
+        <div class="value">{{ p.pulse.dry_count }}</div>
+      </div>
+    </div>
+    <p class="muted">Surplus Teams have Available Balance above zero and can Return unused Credit. Dry Teams are at or below zero after active Reservations and can Request Credit from the Program Pool.</p>
+    {%- set surplus = p.teams|selectattr("id", "in", p.pulse.surplus_teams)|list %}
+    {%- set dry = p.teams|selectattr("id", "in", p.pulse.dry_teams)|list %}
+    <p class="muted">Surplus: {% if surplus %}{{ surplus|map(attribute="name")|join(", ") }}{% else %}none{% endif %}. Dry: {% if dry %}{{ dry|map(attribute="name")|join(", ") }}{% else %}none{% endif %}.</p>
+    <div class="actions">
+      <a href="{{ p.pulse.return_href }}">Return</a>
+      <a href="{{ p.pulse.request_href }}">Request</a>
+      <a href="{{ p.pulse.offer_href }}">Offer</a>
+    </div>
+  </section>
   <table>
     <tr><th>Team</th><th>Eligible</th><th class="num">Ledger</th><th class="num">Available</th><th></th></tr>
     {% for t in p.teams %}
