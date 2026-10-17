@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS programs (
     per_team_cap_cents INTEGER NOT NULL CHECK (per_team_cap_cents > 0),
     expires_at REAL NOT NULL,
     returns_allowed INTEGER NOT NULL DEFAULT 1 CHECK (returns_allowed IN (0, 1)),
+    eligibility_stance TEXT NOT NULL DEFAULT 'open' CHECK (eligibility_stance IN ('listed', 'open')),
+    policy_preset TEXT,
     created_at REAL NOT NULL
 );
 
@@ -84,6 +86,21 @@ CREATE TRIGGER IF NOT EXISTS allocation_events_no_delete
 BEFORE DELETE ON allocation_events
 BEGIN SELECT RAISE(ABORT, 'allocation_events is append-only'); END;
 
+CREATE TABLE IF NOT EXISTS program_audit_events (
+    id INTEGER PRIMARY KEY,
+    program_id INTEGER NOT NULL REFERENCES programs (id),
+    actor TEXT NOT NULL,
+    step TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS program_audit_events_no_update
+BEFORE UPDATE ON program_audit_events
+BEGIN SELECT RAISE(ABORT, 'program_audit_events is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS program_audit_events_no_delete
+BEFORE DELETE ON program_audit_events
+BEGIN SELECT RAISE(ABORT, 'program_audit_events is append-only'); END;
+
 CREATE TABLE IF NOT EXISTS agent_runs (
     id INTEGER PRIMARY KEY,
     operation_id INTEGER NOT NULL REFERENCES operations (id),
@@ -120,4 +137,11 @@ def init_schema(conn: sqlite3.Connection) -> None:
     if cols and "claimed_by" not in cols:
         conn.execute("ALTER TABLE operations ADD COLUMN claimed_by TEXT")
         conn.execute("ALTER TABLE operations ADD COLUMN claimed_at REAL")
+    programs = _columns(conn, "programs")
+    if programs and "eligibility_stance" not in programs:
+        conn.execute(
+            "ALTER TABLE programs ADD COLUMN eligibility_stance TEXT NOT NULL DEFAULT 'open'"
+        )
+    if programs and "policy_preset" not in programs:
+        conn.execute("ALTER TABLE programs ADD COLUMN policy_preset TEXT")
     conn.executescript(SCHEMA)

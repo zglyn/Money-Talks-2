@@ -4,6 +4,7 @@ import csv
 import io
 import os
 import sqlite3
+import time
 import uuid
 from collections import Counter
 from datetime import datetime, timezone
@@ -16,7 +17,7 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from creditpool import db, env, money, report, seed
+from creditpool import db, env, money, presets, report, seed
 from creditpool.worker import claim_and_process_loop, default_llm
 
 env.load()
@@ -37,6 +38,26 @@ def _cents(amount: str) -> int:
     if cents <= 0:
         raise HTTPException(400, "amount must be positive")
     return cents
+
+
+def _hours(value: str) -> float:
+    try:
+        hours = float(value)
+    except ValueError:
+        raise HTTPException(400, "expiry offset must be a number of hours") from None
+    if hours <= 0:
+        raise HTTPException(400, "expiry offset must be positive")
+    return hours
+
+
+def _optional_program_id(value: str) -> int | None:
+    text = (value or "").strip()
+    if not text:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        raise HTTPException(400, "program_id must be an integer") from None
 
 
 def _back(path: str, msg: str) -> RedirectResponse:
@@ -124,6 +145,128 @@ def create_app(db_path: str | None = None) -> FastAPI:
             "pinned_model": request.app.state.pinned_model,
             **context,
         })
+
+    def _configure_target(conn: sqlite3.Connection, program_id: int | None):
+        views = report.programs(conn)
+        if program_id is None:
+            return None, views
+        selected = next((p for p in views if p.id == program_id), None)
+        if selected is None:
+            raise HTTPException(404, "Program not found")
+        return selected, views
+
+    @app.get("/configure")
+    def configure(request: Request, program_id: int | None = None, conn: sqlite3.Connection = Conn):
+        selected, views = _configure_target(conn, program_id)
+        now = time.time()
+        hours = ""
+        if selected is not None:
+            remaining = (selected.expires_at - now) / 3600
+            hours = f"{remaining:.2f}".rstrip("0").rstrip(".")
+        return page(
+            request, "configure.html",
+            program=selected, programs=views, policy_presets=presets.POLICY_PRESETS,
+            stances=list(presets.EligibilityStance), stance_labels=presets.STANCE_LABELS,
+            grants_exist=bool(selected and money.program_has_grants(conn, selected.id)),
+            grants_lock=money.GRANTS_LOCK_DETAIL,
+            expiry_hours=hours,
+        )
+
+    @app.post("/configure/preset")
+    def configure_preset(
+        name: str = Form(""), preset: str = Form(), program_id: str = Form(""),
+        conn: sqlite3.Connection = Conn,
+    ):
+        try:
+            presets.require(preset)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        existing = _optional_program_id(program_id)
+        try:
+            if existing is None:
+                program_name = name.strip()
+                if not program_name:
+                    raise HTTPException(400, "Program name is required")
+                program_id_int = money.create_program_from_preset(conn, program_name, preset)
+            else:
+                money.apply_policy_preset(conn, existing, preset)
+                program_id_int = existing
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except money.RuleViolation as exc:
+            return _back(f"/configure?program_id={existing}", exc.detail)
+        return _back(f"/configure?program_id={program_id_int}", f"Policy Preset {preset} applied")
+
+    @app.post("/configure/rules")
+    def configure_rules(
+        name: str = Form(""), program_id: str = Form(""),
+        budget: str = Form(), cap: str = Form(), eligibility_stance: str = Form(),
+        returns_allowed: str = Form(), expiry_offset_hours: str = Form(),
+        conn: sqlite3.Connection = Conn,
+    ):
+        if returns_allowed not in ("yes", "no"):
+            raise HTTPException(400, "Returns allowed must be yes or no")
+        try:
+            stance = presets.EligibilityStance(eligibility_stance)
+        except ValueError:
+            raise HTTPException(400, "unknown eligibility stance") from None
+        rules = presets.ProgramRules(
+            total_budget_cents=_cents(budget),
+            per_team_cap_cents=_cents(cap),
+            eligibility_stance=stance,
+            returns_allowed=returns_allowed == "yes",
+            expires_at=time.time() + _hours(expiry_offset_hours) * 3600,
+        )
+        existing = _optional_program_id(program_id)
+        try:
+            if existing is None:
+                program_name = name.strip()
+                if not program_name:
+                    raise HTTPException(400, "Program name is required")
+                program_id_int = money.create_program(
+                    conn, program_name, rules.total_budget_cents, rules.per_team_cap_cents,
+                    rules.expires_at, returns_allowed=rules.returns_allowed,
+                    eligibility_stance=rules.eligibility_stance.value,
+                )
+            else:
+                money.update_program_rules(conn, existing, rules)
+                program_id_int = existing
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except money.RuleViolation as exc:
+            return _back(f"/configure?program_id={existing}", exc.detail)
+        return _back(f"/configure?program_id={program_id_int}", "Program Rules saved")
+
+    @app.post("/configure/team")
+    def configure_team(
+        program_id: int = Form(), name: str = Form(), eligible: str = Form(),
+        conn: sqlite3.Connection = Conn,
+    ):
+        team_name = name.strip()
+        if not team_name:
+            raise HTTPException(400, "Team name is required")
+        if eligible not in ("yes", "no"):
+            raise HTTPException(400, "eligible must be yes or no")
+        _configure_target(conn, program_id)
+        try:
+            money.add_team(conn, program_id, team_name, eligible == "yes")
+        except sqlite3.IntegrityError:
+            return _back(f"/configure?program_id={program_id}", f"Team {team_name} already exists")
+        return _back(f"/configure?program_id={program_id}", f"Team {team_name} added")
+
+    @app.post("/configure/grant")
+    def configure_grant(
+        program_id: int = Form(), team_id: int = Form(), amount: str = Form(),
+        conn: sqlite3.Connection = Conn,
+    ):
+        team = conn.execute("SELECT * FROM teams WHERE id = ?", (team_id,)).fetchone()
+        if team is None or team["program_id"] != program_id or team["is_pool"]:
+            raise HTTPException(400, "pick a Team in this Program")
+        try:
+            money.grant(conn, team_id, _cents(amount))
+        except money.RuleViolation as exc:
+            return _back(f"/configure?program_id={program_id}", exc.detail)
+        return _back(f"/configure?program_id={program_id}", "Grant recorded")
 
     @app.get("/")
     def console(request: Request, conn: sqlite3.Connection = Conn):
@@ -243,10 +386,12 @@ def create_app(db_path: str | None = None) -> FastAPI:
         events = report.audit_events(conn, operation_id)
         buf = io.StringIO()
         w = csv.writer(buf)
-        w.writerow(["id", "operation_id", "created_at", "actor", "step", "detail"])
+        w.writerow([
+            "id", "operation_id", "program_id", "program_name", "created_at", "actor", "step", "detail",
+        ])
         for e in events:
             w.writerow([
-                e["id"], e["operation_id"],
+                e["id"], e["operation_id"] or "", e["program_id"] or "", e["program_name"],
                 datetime.fromtimestamp(e["created_at"], timezone.utc).isoformat(),
                 e["actor"], e["step"], e["detail"],
             ])

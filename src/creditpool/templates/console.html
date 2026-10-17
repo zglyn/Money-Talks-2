@@ -7,7 +7,7 @@
 </div>
 {% if not programs %}
   <div class="panel">
-    <p class="muted" style="margin:0">No Programs yet. Open <a href="/demo">Demo control</a> and seed the demo.</p>
+    <p class="muted" style="margin:0">No Programs yet. <a href="/configure">Configure Program Rules</a> or open <a href="/demo">Demo control</a> and seed the demo.</p>
   </div>
 {% endif %}
 {% for p in programs %}
@@ -25,7 +25,7 @@
     Ledger Fingerprint {{ "OK" if p.fingerprint_ok else "drift" }}
     <code>{{ p.fingerprint_digest[:12] }}</code>
   </p>
-  <p class="muted">Expires {{ p.expires_at|when }} · Returns {{ "allowed" if p.returns_allowed else "disabled" }}</p>
+  <p class="muted">Expires {{ p.expires_at|when }} · Returns {{ "allowed" if p.returns_allowed else "disabled" }} · Eligibility stance {{ p.eligibility_label }} · Policy Preset {{ p.policy_preset if p.policy_preset else "set directly" }} · <a href="/configure?program_id={{ p.id }}">Program Rules</a></p>
   {% if report.program_mismatches(p) %}<p class="bad">Program total exceeds budget.</p>{% endif %}
 
   <section class="program-pulse" data-program-id="{{ p.id }}"
