@@ -83,6 +83,19 @@ def test_every_page_renders_brand(client):
         assert "CreditPool" in response.text
 
 
+def test_console_and_demo_show_ledger_fingerprint(client):
+    client.post("/demo/seed")
+    for path in ("/", "/demo", "/reconciliation"):
+        assert "Ledger Fingerprint OK" in client.get(path).text
+
+    client.post("/demo/run-full", follow_redirects=True)
+
+    demo = client.get("/demo").text
+    assert "Ledger Fingerprint OK" in demo
+    assert "Ledger Fingerprint OK" in client.get("/").text
+    assert "Ledger Fingerprint drift" not in demo
+
+
 def test_demo_safe_batch_keeps_reconciliation_clean(client):
     assert client.post("/demo/seed").status_code == 200
     client.post("/demo/run", follow_redirects=True)
