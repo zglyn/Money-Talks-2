@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Iterator
 
+from creditpool import presets
+
 DEFAULT_RESERVATION_TTL_SECONDS = 300.0
 
 
@@ -36,11 +38,12 @@ _DONE = frozenset({Status.APPLIED, Status.RECONCILED})
 
 
 class RuleViolation(Exception):
-    """Raised by Grant, which has no Operation to Flag."""
+    """Raised by Grant and Program Rules writes, which have no Operation to Flag."""
 
     def __init__(self, rule: str, detail: str = "") -> None:
         super().__init__(f"{rule}: {detail}" if detail else rule)
         self.rule = rule
+        self.detail = detail
 
 
 @dataclass(frozen=True)
@@ -185,6 +188,113 @@ def pool_team_id(conn: sqlite3.Connection, program_id: int) -> int:
     return row["id"]
 
 
+GRANTS_LOCK_DETAIL = (
+    "Grants already exist for this Program. "
+    "CreditPool keeps those Grants and refuses changes to the Policy Preset and to Program Rules."
+)
+
+
+def program_has_grants(conn: sqlite3.Connection, program_id: int) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM issuer_ledger WHERE program_id = ? AND kind = 'grant' LIMIT 1",
+        (program_id,),
+    ).fetchone()
+    return row is not None
+
+
+def _refuse_if_grants(conn: sqlite3.Connection, program_id: int, detail: str) -> None:
+    if program_has_grants(conn, program_id):
+        raise RuleViolation("grants_exist", detail)
+
+
+def _insert_program(
+    conn: sqlite3.Connection,
+    name: str,
+    total_budget_cents: int,
+    per_team_cap_cents: int,
+    expires_at: float,
+    returns_allowed: bool,
+    eligibility_stance: str,
+    policy_preset: str | None,
+    now: float,
+) -> int:
+    cur = conn.execute(
+        "INSERT INTO programs (name, total_budget_cents, per_team_cap_cents, expires_at,"
+        " returns_allowed, eligibility_stance, policy_preset, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            name,
+            total_budget_cents,
+            per_team_cap_cents,
+            expires_at,
+            int(returns_allowed),
+            eligibility_stance,
+            policy_preset,
+            now,
+        ),
+    )
+    program_id = cur.lastrowid
+    conn.execute(
+        "INSERT INTO teams (program_id, name, eligible, is_pool) VALUES (?, 'Program Pool', 1, 1)",
+        (program_id,),
+    )
+    return program_id
+
+
+def _audit_program(
+    conn: sqlite3.Connection, program_id: int, step: str, detail: str, now: float
+) -> None:
+    conn.execute(
+        "INSERT INTO program_audit_events (program_id, actor, step, detail, created_at)"
+        " VALUES (?, 'admin', ?, ?, ?)",
+        (program_id, step, detail, now),
+    )
+
+
+def _preset_detail(preset: presets.PolicyPreset, rules: presets.ProgramRules) -> str:
+    returns = "allowed" if rules.returns_allowed else "disabled"
+    return (
+        f"{preset.name}; budget {rules.total_budget_cents}; cap {rules.per_team_cap_cents}; "
+        f"stance {rules.eligibility_stance.value}; returns {returns}; expires_at {rules.expires_at}"
+    )
+
+
+def _rules_match(row: sqlite3.Row, rules: presets.ProgramRules) -> bool:
+    return (
+        row["total_budget_cents"] == rules.total_budget_cents
+        and row["per_team_cap_cents"] == rules.per_team_cap_cents
+        and row["eligibility_stance"] == rules.eligibility_stance.value
+        and bool(row["returns_allowed"]) == rules.returns_allowed
+        and row["expires_at"] == rules.expires_at
+    )
+
+
+def _require_positive_rules(rules: presets.ProgramRules) -> None:
+    if rules.total_budget_cents <= 0 or rules.per_team_cap_cents <= 0:
+        raise ValueError("budget and per-Team cap must be positive")
+
+
+def _write_rules(
+    conn: sqlite3.Connection,
+    program_id: int,
+    rules: presets.ProgramRules,
+    policy_preset: str | None,
+) -> None:
+    conn.execute(
+        "UPDATE programs SET total_budget_cents = ?, per_team_cap_cents = ?, expires_at = ?,"
+        " returns_allowed = ?, eligibility_stance = ?, policy_preset = ? WHERE id = ?",
+        (
+            rules.total_budget_cents,
+            rules.per_team_cap_cents,
+            rules.expires_at,
+            int(rules.returns_allowed),
+            rules.eligibility_stance.value,
+            policy_preset,
+            program_id,
+        ),
+    )
+
+
 def create_program(
     conn: sqlite3.Connection,
     name: str,
@@ -192,22 +302,65 @@ def create_program(
     per_team_cap_cents: int,
     expires_at: float,
     returns_allowed: bool = True,
+    eligibility_stance: str = "open",
     now: float | None = None,
 ) -> int:
     """Create a Program and its Program Pool Team."""
     t = _now(now)
+    stance = presets.EligibilityStance(eligibility_stance).value
     with _tx(conn):
-        cur = conn.execute(
-            "INSERT INTO programs (name, total_budget_cents, per_team_cap_cents, expires_at,"
-            " returns_allowed, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (name, total_budget_cents, per_team_cap_cents, expires_at, int(returns_allowed), t),
+        return _insert_program(
+            conn, name, total_budget_cents, per_team_cap_cents, expires_at,
+            returns_allowed, stance, None, t,
         )
-        program_id = cur.lastrowid
-        conn.execute(
-            "INSERT INTO teams (program_id, name, eligible, is_pool) VALUES (?, 'Program Pool', 1, 1)",
-            (program_id,),
+
+
+def create_program_from_preset(
+    conn: sqlite3.Connection, name: str, preset_name: str, now: float | None = None
+) -> int:
+    """Create a Program whose Program Rules are the named Policy Preset."""
+    t = _now(now)
+    preset = presets.require(preset_name)
+    rules = preset.rules(t)
+    with _tx(conn):
+        program_id = _insert_program(
+            conn, name, rules.total_budget_cents, rules.per_team_cap_cents, rules.expires_at,
+            rules.returns_allowed, rules.eligibility_stance.value, preset.name, t,
         )
-    return program_id
+        _audit_program(conn, program_id, "Policy Preset applied", _preset_detail(preset, rules), t)
+        return program_id
+
+
+def apply_policy_preset(
+    conn: sqlite3.Connection, program_id: int, preset_name: str, now: float | None = None
+) -> None:
+    """Fill Program Rules from a Policy Preset. Refuses once any Grant exists.
+
+    A repeat that would write the same rules does not append another Audit Event.
+    """
+    t = _now(now)
+    preset = presets.require(preset_name)
+    rules = preset.rules(t)
+    with _tx(conn):
+        row = _program(conn, program_id)
+        if row["policy_preset"] == preset.name and _rules_match(row, rules):
+            return
+        _refuse_if_grants(conn, program_id, GRANTS_LOCK_DETAIL)
+        _write_rules(conn, program_id, rules, preset.name)
+        _audit_program(conn, program_id, "Policy Preset applied", _preset_detail(preset, rules), t)
+
+
+def update_program_rules(
+    conn: sqlite3.Connection, program_id: int, rules: presets.ProgramRules
+) -> None:
+    """Edit Program Rules. Refuses once any Grant exists, and clears the Policy Preset name."""
+    _require_positive_rules(rules)
+    with _tx(conn):
+        row = _program(conn, program_id)
+        if _rules_match(row, rules):
+            return
+        _refuse_if_grants(conn, program_id, GRANTS_LOCK_DETAIL)
+        _write_rules(conn, program_id, rules, None)
 
 
 def add_team(

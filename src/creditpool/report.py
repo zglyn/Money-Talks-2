@@ -4,7 +4,7 @@ import sqlite3
 import time
 from dataclasses import dataclass, field
 
-from creditpool import money
+from creditpool import money, presets
 
 
 @dataclass(frozen=True)
@@ -28,11 +28,17 @@ class ProgramView:
     expires_at: float
     expired: bool
     returns_allowed: bool
+    eligibility_stance: str
+    policy_preset: str | None
     teams: list[TeamRow] = field(default_factory=list)
 
     @property
     def remaining_cents(self) -> int:
         return self.total_budget_cents - self.used_cents
+
+    @property
+    def eligibility_label(self) -> str:
+        return presets.STANCE_LABELS[presets.EligibilityStance(self.eligibility_stance)]
 
 
 def _operation_net(conn: sqlite3.Connection, team_id: int) -> int:
@@ -86,7 +92,9 @@ def programs(conn: sqlite3.Connection, now: float | None = None) -> list[Program
             id=p["id"], name=p["name"], total_budget_cents=p["total_budget_cents"],
             used_cents=money.program_total(conn, p["id"]),
             per_team_cap_cents=p["per_team_cap_cents"], expires_at=p["expires_at"],
-            expired=t >= p["expires_at"], returns_allowed=bool(p["returns_allowed"]), teams=teams,
+            expired=t >= p["expires_at"], returns_allowed=bool(p["returns_allowed"]),
+            eligibility_stance=p["eligibility_stance"], policy_preset=p["policy_preset"],
+            teams=teams,
         ))
     return views
 
@@ -119,10 +127,22 @@ def operations(conn: sqlite3.Connection, status: str | None = None) -> list[sqli
 
 
 def audit_events(conn: sqlite3.Connection, operation_id: int | None = None) -> list[sqlite3.Row]:
-    sql = "SELECT * FROM allocation_events"
-    if operation_id is None:
-        return conn.execute(sql + " ORDER BY id DESC LIMIT 500").fetchall()
-    return conn.execute(sql + " WHERE operation_id = ? ORDER BY id", (operation_id,)).fetchall()
+    if operation_id is not None:
+        return conn.execute(
+            "SELECT id, operation_id, NULL AS program_id, '' AS program_name, created_at, actor,"
+            " step, detail FROM allocation_events WHERE operation_id = ? ORDER BY id",
+            (operation_id,),
+        ).fetchall()
+    return conn.execute(
+        "SELECT id, operation_id, program_id, program_name, created_at, actor, step, detail FROM ("
+        " SELECT e.id AS id, e.operation_id AS operation_id, NULL AS program_id,"
+        " '' AS program_name, e.created_at AS created_at, e.actor AS actor, e.step AS step,"
+        " e.detail AS detail FROM allocation_events e"
+        " UNION ALL"
+        " SELECT e.id, NULL, e.program_id, p.name, e.created_at, e.actor, e.step, e.detail"
+        " FROM program_audit_events e JOIN programs p ON p.id = e.program_id"
+        ") ORDER BY created_at DESC, id DESC LIMIT 500"
+    ).fetchall()
 
 
 def status_counts(conn: sqlite3.Connection) -> dict[str, int]:

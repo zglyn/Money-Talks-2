@@ -77,7 +77,7 @@ def client(tmp_path):
 
 
 def test_every_page_renders_brand(client):
-    for path in ("/", "/wallet", "/operations", "/reconciliation", "/audit", "/demo"):
+    for path in ("/", "/configure", "/wallet", "/operations", "/reconciliation", "/audit", "/demo"):
         response = client.get(path)
         assert response.status_code == 200
         assert "CreditPool" in response.text

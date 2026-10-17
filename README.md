@@ -55,7 +55,7 @@ Open http://127.0.0.1:8000. The database is the file named by `CREDITPOOL_DB` (d
 4. Back on Demo control, press **Reset to snapshot**, set **v2**, and run the same batch.
 5. Reconciliation is clean. Risky moves are Flagged instead, and every Operation shows 6 or more tool steps in its agent run.
 
-Other pages: **Program console** (budget used and remaining), **Team wallet** (Return and Request forms), **Operations** (queue, claim owner, agent run and PRISM trace id), **Audit log** (filter by Operation number).
+Other pages: **Program console** (budget used and remaining), **Program Rules** (`/configure`, apply a Policy Preset and edit budget, per-Team cap, eligibility stance, Returns allowed, and expiry offset before Grants), **Team wallet** (Return and Request forms), **Operations** (queue, claim owner, agent run and PRISM trace id), **Audit log** (filter by Operation number).
 
 ## Worker
 

@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}Program Rules · CreditPool{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Program Rules</h1>
+  <p>Apply a Policy Preset, then edit budget, per-Team cap, eligibility stance, Returns allowed, and the expiry offset before any Grant.</p>
+</div>
+
+{% if programs %}
+<div class="panel">
+  <h2>Programs</h2>
+  <p class="muted">
+    {% for p in programs %}
+      <a href="/configure?program_id={{ p.id }}">{{ p.name }}</a>{% if not loop.last %} · {% endif %}
+    {% endfor %}
+    · <a href="/configure">New Program</a>
+  </p>
+</div>
+{% endif %}
+
+<section class="panel">
+  <h2>Policy Presets</h2>
+  <p class="muted">A Policy Preset is a template. It fills Program Rules. Each Team's Eligible flag remains the gate on apply.</p>
+  <table>
+    <tr>
+      <th>Policy Preset</th>
+      <th class="num">Budget</th>
+      <th class="num">Per-Team cap</th>
+      <th>Eligibility stance</th>
+      <th>Returns allowed</th>
+      <th class="num">Expiry offset</th>
+    </tr>
+    {% for preset in policy_presets %}
+    <tr>
+      <td>{{ preset.name }}</td>
+      <td class="num">{{ preset.total_budget_cents|usd }}</td>
+      <td class="num">{{ preset.per_team_cap_cents|usd }}</td>
+      <td>{{ stance_labels[preset.eligibility_stance] }}</td>
+      <td>{{ "allowed" if preset.returns_allowed else "disabled" }}</td>
+      <td class="num">{{ preset.expiry_offset_hours }} hours</td>
+    </tr>
+    {% endfor %}
+  </table>
+
+  <form method="post" action="/configure/preset" style="margin-top:14px">
+    <fieldset {% if grants_exist %}disabled{% endif %} class="grid" style="border:0; padding:0; margin:0; align-items:end">
+      <input type="hidden" name="program_id" value="{{ program.id if program else '' }}">
+      <div>
+        <label for="preset-name">Program</label>
+        {% if program %}
+        <input id="preset-name" name="name" value="{{ program.name }}" readonly>
+        {% else %}
+        <input id="preset-name" name="name" required placeholder="Program name">
+        {% endif %}
+      </div>
+      <div>
+        <label for="preset">Policy Preset</label>
+        <select id="preset" name="preset">
+          {% for preset in policy_presets %}
+          <option value="{{ preset.name }}" {{ "selected" if program and program.policy_preset == preset.name }}>{{ preset.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="actions" style="margin:0">
+        <button type="submit">Apply Policy Preset</button>
+      </div>
+    </fieldset>
+  </form>
+  {% if grants_exist %}<p class="bad">{{ grants_lock }}</p>{% endif %}
+</section>
+
+{% if program %}
+<section class="panel">
+  <h2>{{ program.name }}</h2>
+  <p class="muted">
+    Policy Preset {{ program.policy_preset if program.policy_preset else "set directly" }}
+    · Expires {{ program.expires_at|when }}
+    · Eligibility stance {{ program.eligibility_label }}
+    · Returns {{ "allowed" if program.returns_allowed else "disabled" }}
+  </p>
+  <form method="post" action="/configure/rules">
+    <fieldset {% if grants_exist %}disabled{% endif %} class="grid" style="border:0; padding:0; margin:0; align-items:end">
+      <input type="hidden" name="program_id" value="{{ program.id }}">
+      <input type="hidden" name="name" value="{{ program.name }}">
+      <div>
+        <label for="budget">Budget (USD)</label>
+        <input id="budget" name="budget" value="{{ '%.2f'|format(program.total_budget_cents / 100) }}">
+      </div>
+      <div>
+        <label for="cap">Per-Team cap (USD)</label>
+        <input id="cap" name="cap" value="{{ '%.2f'|format(program.per_team_cap_cents / 100) }}">
+      </div>
+      <div>
+        <label for="stance">Eligibility stance</label>
+        <select id="stance" name="eligibility_stance">
+          {% for stance in stances %}
+          <option value="{{ stance.value }}" {{ "selected" if program.eligibility_stance == stance.value }}>{{ stance_labels[stance] }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="returns">Returns allowed</label>
+        <select id="returns" name="returns_allowed">
+          <option value="yes" {{ "selected" if program.returns_allowed }}>allowed</option>
+          <option value="no" {{ "selected" if not program.returns_allowed }}>disabled</option>
+        </select>
+      </div>
+      <div>
+        <label for="expiry">Expiry offset (hours from now)</label>
+        <input id="expiry" name="expiry_offset_hours" value="{{ expiry_hours }}">
+      </div>
+      <div class="actions" style="margin:0">
+        <button type="submit">Save Program Rules</button>
+      </div>
+    </fieldset>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Team and Grant</h2>
+  <form method="post" action="/configure/team" class="grid" style="align-items:end">
+    <input type="hidden" name="program_id" value="{{ program.id }}">
+    <div>
+      <label for="team-name">Team</label>
+      <input id="team-name" name="name" required placeholder="Team name">
+    </div>
+    <div>
+      <label for="eligible">Eligible</label>
+      <select id="eligible" name="eligible">
+        <option value="yes">yes</option>
+        <option value="no">no</option>
+      </select>
+    </div>
+    <div class="actions" style="margin:0"><button type="submit">Add Team</button></div>
+  </form>
+
+  <form method="post" action="/configure/grant" class="grid" style="align-items:end">
+    <input type="hidden" name="program_id" value="{{ program.id }}">
+    <div>
+      <label for="grant-team">Team</label>
+      <select id="grant-team" name="team_id">
+        {% for t in program.teams if not t.is_pool %}
+        <option value="{{ t.id }}">{{ t.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="grant-amount">Grant (USD)</label>
+      <input id="grant-amount" name="amount" value="100.00">
+    </div>
+    <div class="actions" style="margin:0">
+      <button type="submit" {% if not program.teams|rejectattr('is_pool')|list %}disabled{% endif %}>Record Grant</button>
+    </div>
+  </form>
+  <p class="muted"><a href="/">Open the Program console</a> to see budget used and remaining.</p>
+</section>
+{% endif %}
+{% endblock %}

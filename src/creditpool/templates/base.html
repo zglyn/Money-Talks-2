@@ -325,6 +325,7 @@
     <nav>
       {% set path = request.url.path %}
       <a href="/" class="{{ 'active' if path == '/' else '' }}">Program</a>
+      <a href="/configure" class="{{ 'active' if path.startswith('/configure') else '' }}">Program Rules</a>
       <a href="/wallet" class="{{ 'active' if path.startswith('/wallet') else '' }}">Wallet</a>
       <a href="/operations" class="{{ 'active' if path.startswith('/operations') else '' }}">Operations</a>
       <a href="/reconciliation" class="{{ 'active' if path.startswith('/reconciliation') else '' }}">Reconcile</a>
