@@ -24,6 +24,17 @@ class Status(StrEnum):
     FLAGGED = "flagged"
 
 
+class OfferStatus(StrEnum):
+    OPEN = "open"
+    CANCELLED = "cancelled"
+    ACCEPTED = "accepted"
+
+
+class SettlementStatus(StrEnum):
+    SIMULATED = "simulated"
+    EXTERNAL_PAID = "external_paid"
+
+
 _TRANSITIONS: dict[Status, frozenset[Status]] = {
     Status.REQUESTED: frozenset({Status.RESERVED, Status.APPLIED, Status.FLAGGED, Status.FAILED}),
     Status.RESERVED: frozenset({Status.REQUESTED, Status.APPLIED, Status.FLAGGED, Status.FAILED}),
@@ -70,6 +81,33 @@ class Operation:
     flag_reason: str | None
 
 
+@dataclass(frozen=True)
+class Offer:
+    id: int
+    program_id: int
+    team_id: int
+    amount_cents: int
+    settlement_ask_cents: int
+    note: str
+    status: OfferStatus
+    idempotency_key: str
+
+
+@dataclass(frozen=True)
+class Trade:
+    id: int
+    offer_id: int
+    program_id: int
+    from_team_id: int
+    to_team_id: int
+    amount_cents: int
+    settlement_ask_cents: int
+    settlement_status: SettlementStatus
+    note: str
+    operation_id: int
+    idempotency_key: str
+
+
 @contextmanager
 def _tx(conn: sqlite3.Connection) -> Iterator[None]:
     conn.execute("BEGIN IMMEDIATE")
@@ -114,13 +152,29 @@ def audit_steps(conn: sqlite3.Connection, operation_id: int) -> list[str]:
     return [r["step"] for r in rows]
 
 
+def audit_steps_for_offer(conn: sqlite3.Connection, offer_id: int) -> list[str]:
+    rows = conn.execute(
+        "SELECT step FROM allocation_events WHERE offer_id = ? ORDER BY id", (offer_id,)
+    )
+    return [r["step"] for r in rows]
+
+
 def _audit(
-    conn: sqlite3.Connection, operation_id: int, actor: str, step: str, detail: str, now: float
+    conn: sqlite3.Connection,
+    operation_id: int | None,
+    actor: str,
+    step: str,
+    detail: str,
+    now: float,
+    *,
+    offer_id: int | None = None,
+    trade_id: int | None = None,
 ) -> None:
     conn.execute(
-        "INSERT INTO allocation_events (operation_id, actor, step, detail, created_at)"
-        " VALUES (?, ?, ?, ?, ?)",
-        (operation_id, actor, step, detail, now),
+        "INSERT INTO allocation_events"
+        " (operation_id, offer_id, trade_id, actor, step, detail, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (operation_id, offer_id, trade_id, actor, step, detail, now),
     )
 
 
@@ -249,6 +303,56 @@ def grant(
     return cur.lastrowid
 
 
+def _insert_operation(
+    conn: sqlite3.Connection,
+    *,
+    program_id: int,
+    type: str,
+    from_team_id: int,
+    to_team_id: int | None,
+    amount_cents: int,
+    idempotency_key: str,
+    agent_version: str,
+    now: float,
+) -> Operation:
+    existing = conn.execute(
+        "SELECT id FROM operations WHERE idempotency_key = ?", (idempotency_key,)
+    ).fetchone()
+    if existing is not None:
+        return _load(conn, existing["id"])
+    if type not in ("return", "reallocate"):
+        raise ValueError(f"unknown operation type {type!r}")
+    if amount_cents <= 0:
+        raise ValueError("amount must be positive")
+    if type == "return":
+        pool = pool_team_id(conn, program_id)
+        if to_team_id not in (None, pool):
+            raise ValueError("a return must target the Program Pool")
+        to_team_id = pool
+    elif to_team_id is None:
+        raise ValueError("a reallocate needs a to_team_id")
+    if from_team_id == to_team_id:
+        raise ValueError("from and to team must differ")
+    cur = conn.execute(
+        "INSERT INTO operations (program_id, type, from_team_id, to_team_id, amount_cents,"
+        " idempotency_key, status, agent_version, created_at, updated_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, 'requested', ?, ?, ?)",
+        (
+            program_id,
+            type,
+            from_team_id,
+            to_team_id,
+            amount_cents,
+            idempotency_key,
+            agent_version,
+            now,
+            now,
+        ),
+    )
+    _audit(conn, cur.lastrowid, "system", "created", type, now)
+    return _load(conn, cur.lastrowid)
+
+
 def create_operation(
     conn: sqlite3.Connection,
     *,
@@ -267,44 +371,18 @@ def create_operation(
     `from_team_id` is the Program Pool. Team ids are not checked against `program_id`
     here: Program Rules refuse cross-Program references at apply.
     """
-    t = _now(now)
     with _tx(conn):
-        existing = conn.execute(
-            "SELECT id FROM operations WHERE idempotency_key = ?", (idempotency_key,)
-        ).fetchone()
-        if existing is not None:
-            return _load(conn, existing["id"])
-        if type not in ("return", "reallocate"):
-            raise ValueError(f"unknown operation type {type!r}")
-        if amount_cents <= 0:
-            raise ValueError("amount must be positive")
-        if type == "return":
-            pool = pool_team_id(conn, program_id)
-            if to_team_id not in (None, pool):
-                raise ValueError("a return must target the Program Pool")
-            to_team_id = pool
-        elif to_team_id is None:
-            raise ValueError("a reallocate needs a to_team_id")
-        if from_team_id == to_team_id:
-            raise ValueError("from and to team must differ")
-        cur = conn.execute(
-            "INSERT INTO operations (program_id, type, from_team_id, to_team_id, amount_cents,"
-            " idempotency_key, status, agent_version, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, 'requested', ?, ?, ?)",
-            (
-                program_id,
-                type,
-                from_team_id,
-                to_team_id,
-                amount_cents,
-                idempotency_key,
-                agent_version,
-                t,
-                t,
-            ),
+        return _insert_operation(
+            conn,
+            program_id=program_id,
+            type=type,
+            from_team_id=from_team_id,
+            to_team_id=to_team_id,
+            amount_cents=amount_cents,
+            idempotency_key=idempotency_key,
+            agent_version=agent_version,
+            now=_now(now),
         )
-        _audit(conn, cur.lastrowid, "system", "created", type, t)
-        return _load(conn, cur.lastrowid)
 
 
 def create_return(
@@ -348,6 +426,227 @@ def create_request(
         agent_version=agent_version,
         now=now,
     )
+
+
+def _load_offer(conn: sqlite3.Connection, offer_id: int) -> Offer:
+    row = conn.execute("SELECT * FROM offers WHERE id = ?", (offer_id,)).fetchone()
+    if row is None:
+        raise LookupError(f"offer {offer_id} not found")
+    return Offer(
+        id=row["id"],
+        program_id=row["program_id"],
+        team_id=row["team_id"],
+        amount_cents=row["amount_cents"],
+        settlement_ask_cents=row["settlement_ask_cents"],
+        note=row["note"],
+        status=OfferStatus(row["status"]),
+        idempotency_key=row["idempotency_key"],
+    )
+
+
+def get_offer(conn: sqlite3.Connection, offer_id: int) -> Offer:
+    return _load_offer(conn, offer_id)
+
+
+def _load_trade(conn: sqlite3.Connection, trade_id: int) -> Trade:
+    row = conn.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()
+    if row is None:
+        raise LookupError(f"trade {trade_id} not found")
+    return Trade(
+        id=row["id"],
+        offer_id=row["offer_id"],
+        program_id=row["program_id"],
+        from_team_id=row["from_team_id"],
+        to_team_id=row["to_team_id"],
+        amount_cents=row["amount_cents"],
+        settlement_ask_cents=row["settlement_ask_cents"],
+        settlement_status=SettlementStatus(row["settlement_status"]),
+        note=row["note"],
+        operation_id=row["operation_id"],
+        idempotency_key=row["idempotency_key"],
+    )
+
+
+def get_trade(conn: sqlite3.Connection, trade_id: int) -> Trade:
+    return _load_trade(conn, trade_id)
+
+
+def _settlement_status(value: str) -> SettlementStatus:
+    try:
+        return SettlementStatus(value)
+    except ValueError:
+        raise ValueError("settlement status must be simulated or external_paid") from None
+
+
+def post_offer(
+    conn: sqlite3.Connection,
+    program_id: int,
+    team_id: int,
+    amount_cents: int,
+    settlement_ask_cents: int,
+    idempotency_key: str,
+    note: str = "",
+    now: float | None = None,
+) -> Offer:
+    """Post an Offer, or return the existing one for a repeated Idempotency Key.
+
+    Posting does not write the Issuer Ledger.
+    """
+    if not idempotency_key:
+        raise ValueError("idempotency key is required")
+    t = _now(now)
+    with _tx(conn):
+        existing = conn.execute(
+            "SELECT id FROM offers WHERE idempotency_key = ?", (idempotency_key,)
+        ).fetchone()
+        if existing is not None:
+            return _load_offer(conn, existing["id"])
+        if amount_cents <= 0:
+            raise ValueError("amount must be positive")
+        if settlement_ask_cents < 0:
+            raise ValueError("settlement ask must not be negative")
+        team = _team(conn, team_id)
+        if team is None:
+            raise LookupError(f"team {team_id} not found")
+        _program(conn, program_id)
+        if team["program_id"] != program_id:
+            raise ValueError("team belongs to a different Program")
+        cur = conn.execute(
+            "INSERT INTO offers (program_id, team_id, amount_cents, settlement_ask_cents, note,"
+            " status, idempotency_key, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?)",
+            (program_id, team_id, amount_cents, settlement_ask_cents, note, idempotency_key, t, t),
+        )
+        offer_id = cur.lastrowid
+        _audit(conn, None, "team", "offer_created", note, t, offer_id=offer_id)
+        return _load_offer(conn, offer_id)
+
+
+def cancel_offer(
+    conn: sqlite3.Connection, offer_id: int, now: float | None = None
+) -> Offer:
+    """Cancel an open Offer. A repeated cancel returns that Offer and does not move Credit."""
+    t = _now(now)
+    with _tx(conn):
+        offer = _load_offer(conn, offer_id)
+        if offer.status is OfferStatus.CANCELLED:
+            return offer
+        if offer.status is not OfferStatus.OPEN:
+            raise ValueError(f"offer {offer_id} is {offer.status.value}")
+        conn.execute(
+            "UPDATE offers SET status = 'cancelled', updated_at = ? WHERE id = ?",
+            (t, offer_id),
+        )
+        _audit(conn, None, "team", "offer_cancelled", "", t, offer_id=offer_id)
+        return _load_offer(conn, offer_id)
+
+
+def accept_offer(
+    conn: sqlite3.Connection,
+    offer_id: int,
+    to_team_id: int,
+    idempotency_key: str,
+    settlement_status: str = SettlementStatus.SIMULATED,
+    agent_version: str = "v2",
+    now: float | None = None,
+) -> Trade:
+    """Accept an open Offer into one Trade and one reallocate Operation.
+
+    A repeated Idempotency Key returns that Trade and does not create another Operation.
+    Credit does not move here. Process the Operation with reserve, apply, and reconcile.
+    """
+    if not idempotency_key:
+        raise ValueError("idempotency key is required")
+    status = _settlement_status(settlement_status)
+    t = _now(now)
+    with _tx(conn):
+        existing = conn.execute(
+            "SELECT id FROM trades WHERE idempotency_key = ?", (idempotency_key,)
+        ).fetchone()
+        if existing is not None:
+            return _load_trade(conn, existing["id"])
+        taken = conn.execute(
+            "SELECT id FROM operations WHERE idempotency_key = ?", (idempotency_key,)
+        ).fetchone()
+        if taken is not None:
+            raise ValueError("idempotency key already identifies an Operation")
+        offer = _load_offer(conn, offer_id)
+        if offer.status is not OfferStatus.OPEN:
+            raise ValueError(f"offer {offer_id} is {offer.status.value}")
+        if to_team_id == offer.team_id:
+            raise ValueError("from and to team must differ")
+        if _team(conn, to_team_id) is None:
+            raise LookupError(f"team {to_team_id} not found")
+        op = _insert_operation(
+            conn,
+            program_id=offer.program_id,
+            type="reallocate",
+            from_team_id=offer.team_id,
+            to_team_id=to_team_id,
+            amount_cents=offer.amount_cents,
+            idempotency_key=idempotency_key,
+            agent_version=agent_version,
+            now=t,
+        )
+        cur = conn.execute(
+            "INSERT INTO trades (offer_id, program_id, from_team_id, to_team_id, amount_cents,"
+            " settlement_ask_cents, settlement_status, note, operation_id, idempotency_key,"
+            " created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                offer.id,
+                offer.program_id,
+                offer.team_id,
+                to_team_id,
+                offer.amount_cents,
+                offer.settlement_ask_cents,
+                status.value,
+                offer.note,
+                op.id,
+                idempotency_key,
+                t,
+                t,
+            ),
+        )
+        trade_id = cur.lastrowid
+        conn.execute(
+            "UPDATE offers SET status = 'accepted', updated_at = ? WHERE id = ?",
+            (t, offer.id),
+        )
+        _audit(
+            conn, op.id, "team", "offer_accepted", f"trade {trade_id}", t,
+            offer_id=offer.id, trade_id=trade_id,
+        )
+        return _load_trade(conn, trade_id)
+
+
+def record_settlement(
+    conn: sqlite3.Connection,
+    trade_id: int,
+    status: str,
+    note: str | None = None,
+    now: float | None = None,
+) -> Trade:
+    """Record Settlement on a Trade. A repeat with the same status writes nothing.
+
+    This never writes the Issuer Ledger.
+    """
+    parsed = _settlement_status(status)
+    t = _now(now)
+    with _tx(conn):
+        trade = _load_trade(conn, trade_id)
+        new_note = trade.note if note is None else note
+        if trade.settlement_status is parsed and trade.note == new_note:
+            return trade
+        conn.execute(
+            "UPDATE trades SET settlement_status = ?, note = ?, updated_at = ? WHERE id = ?",
+            (parsed.value, new_note, t, trade.id),
+        )
+        _audit(
+            conn, trade.operation_id, "team", "settlement", parsed.value, t,
+            offer_id=trade.offer_id, trade_id=trade.id,
+        )
+        return _load_trade(conn, trade.id)
 
 
 def _release_reservations(conn: sqlite3.Connection, operation_id: int) -> None:
