@@ -5,6 +5,26 @@
   <h1>Program console</h1>
   <p>Budget, caps, Team balances, and Admin Reallocate on the Issuer Ledger.</p>
 </div>
+{% if programs %}
+<section class="panel" id="instruct">
+  <h2>Propose a draft</h2>
+  <p class="muted">Type a Return, Request, Reallocate, Offer, Accept, or Flagged resolution. Confirm writes through the same path as the forms. Abandon leaves the Issuer Ledger unchanged.</p>
+  <p class="muted">Offline, use a line such as <code>return 25 from Alpha</code>, <code>request 25 for Beta</code>, <code>reallocate 50 from Alpha to Beta</code>, <code>offer 10 from Alpha for 4</code>, <code>accept offer 1 as Beta</code>, or <code>retry flagged 3</code>.</p>
+  <form method="post" action="/admin/propose">
+    {% if programs|length > 1 %}
+    <label for="program_id">Program</label>
+    <select id="program_id" name="program_id">
+      {% for p in programs %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+    </select>
+    {% else %}
+    <input type="hidden" name="program_id" value="{{ programs[0].id }}">
+    {% endif %}
+    <label for="instruction">Instruction</label>
+    <input id="instruction" name="instruction" placeholder="return 25 from Alpha" autocomplete="off">
+    <div class="actions"><button type="submit">Propose</button></div>
+  </form>
+</section>
+{% endif %}
 {% if not programs %}
   <div class="panel">
     <p class="muted" style="margin:0">No Programs yet. <a href="/configure">Configure Program Rules</a> or open <a href="/demo">Demo control</a> and seed the demo.</p>

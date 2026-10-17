@@ -12,6 +12,7 @@ from creditpool import env
 
 log = logging.getLogger(__name__)
 
+_OK_OUTCOMES = frozenset({"reconciled", "flagged", "proposed", "refused"})
 _CLIENT: Any = None
 _CLIENT_TRIED = False
 
@@ -47,9 +48,8 @@ def client():
 
 
 @contextmanager
-def operation_session(operation_id: int) -> Iterator[str]:
-    """Group all PRISM events for one Operation under one session_id."""
-    session_id = f"creditpool-op-{operation_id}"
+def session(session_id: str) -> Iterator[str]:
+    """Group PRISM events under one session id. No-op when the client is missing."""
     pt = client()
     if pt is None:
         yield session_id
@@ -57,6 +57,13 @@ def operation_session(operation_id: int) -> Iterator[str]:
     import prismtrace
 
     with prismtrace.session(session_id):
+        yield session_id
+
+
+@contextmanager
+def operation_session(operation_id: int) -> Iterator[str]:
+    """Group all PRISM events for one Operation under one session_id."""
+    with session(f"creditpool-op-{operation_id}") as session_id:
         yield session_id
 
 
@@ -128,7 +135,7 @@ def submit_run(
             agent_id=f"creditpool-{agent_version}",
             conversation_id=session_id,
             model=model or "creditpool-agent",
-            final_status="success" if outcome in ("reconciled", "flagged") else "error",
+            final_status="success" if outcome in _OK_OUTCOMES else "error",
         )
     except Exception:
         log.exception("PRISM submit_trajectory failed")

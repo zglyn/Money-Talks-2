@@ -332,6 +332,20 @@ def _audit_program(
     )
 
 
+def record_program_event(
+    conn: sqlite3.Connection,
+    program_id: int,
+    step: str,
+    detail: str = "",
+    now: float | None = None,
+) -> None:
+    """Append one Program Audit Event. Does not move Credit."""
+    t = _now(now)
+    with _tx(conn):
+        _program(conn, program_id)
+        _audit_program(conn, program_id, step, detail, t)
+
+
 def _preset_detail(preset: presets.PolicyPreset, rules: presets.ProgramRules) -> str:
     returns = "allowed" if rules.returns_allowed else "disabled"
     return (
@@ -983,6 +997,39 @@ def _program_rule_violation(
     ).fetchone()
     if held is None:
         return "no_reservation", "no active Reservation for this Operation"
+    return None
+
+
+def preview_program_rules(
+    conn: sqlite3.Connection,
+    *,
+    program_id: int,
+    type: str,
+    from_team_id: int,
+    to_team_id: int,
+    amount_cents: int,
+    now: float | None = None,
+) -> tuple[str, str] | None:
+    """Return the Program Rule a draft would hit, or None. Does not write."""
+    t = _now(now)
+    op = Operation(
+        id=0,
+        program_id=program_id,
+        type=type,
+        from_team_id=from_team_id,
+        to_team_id=to_team_id,
+        amount_cents=amount_cents,
+        idempotency_key="",
+        status=Status.REQUESTED,
+        agent_version="v2",
+        flag_reason=None,
+    )
+    violation = _program_rule_violation(conn, op, t)
+    if violation is not None and violation[0] != "no_reservation":
+        return violation
+    available = available_balance(conn, from_team_id, t)
+    if available < amount_cents:
+        return "insufficient_available", f"available {available} < {amount_cents}"
     return None
 
 

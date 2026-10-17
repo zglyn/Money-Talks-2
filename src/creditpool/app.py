@@ -17,7 +17,7 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from creditpool import db, env, money, presets, report, seed
+from creditpool import db, drafts, env, money, presets, report, seed
 from creditpool.worker import claim_and_process_loop, default_llm
 
 env.load()
@@ -313,6 +313,103 @@ def create_app(db_path: str | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         return _back("/operations", f"Operation #{op.id} → {op.status.value}")
+
+    def _proposal_page(request: Request, result, key: str):
+        draft = result if isinstance(result, drafts.Draft) else None
+        refusal = result if isinstance(result, drafts.Refusal) else None
+        shown = draft or refusal
+        return page(
+            request, "propose.html",
+            draft=draft, refusal=refusal, instruction=shown.instruction,
+            program_id=shown.program_id, fields=drafts.form_values(draft) if draft else {},
+            key=key, kind_label=drafts.LABEL[draft.kind] if draft else "",
+        )
+
+    def _posted_draft(
+        kind: str, program_id: str, instruction: str, from_team_id: str, to_team_id: str,
+        from_name: str, to_name: str, amount_cents: str, settlement_ask_cents: str,
+        offer_id: str, operation_id: str, action: str, reason: str, note: str,
+    ) -> dict[str, str]:
+        return {
+            "kind": kind, "program_id": program_id, "instruction": instruction,
+            "from_team_id": from_team_id, "to_team_id": to_team_id,
+            "from_name": from_name, "to_name": to_name, "amount_cents": amount_cents,
+            "settlement_ask_cents": settlement_ask_cents, "offer_id": offer_id,
+            "operation_id": operation_id, "action": action, "reason": reason, "note": note,
+        }
+
+    @app.post("/admin/propose")
+    def admin_propose(
+        request: Request, program_id: int = Form(), instruction: str = Form(""),
+        conn: sqlite3.Connection = Conn,
+    ):
+        try:
+            result = drafts.propose(conn, program_id, instruction, drafts.default_proposer())
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return _proposal_page(request, result, uuid.uuid4().hex[:12])
+
+    @app.post("/admin/confirm")
+    def admin_confirm(
+        request: Request,
+        kind: str = Form(""), program_id: str = Form(""), instruction: str = Form(""),
+        from_team_id: str = Form(""), to_team_id: str = Form(""),
+        from_name: str = Form(""), to_name: str = Form(""),
+        amount_cents: str = Form(""), settlement_ask_cents: str = Form(""),
+        offer_id: str = Form(""), operation_id: str = Form(""),
+        action: str = Form(""), reason: str = Form(""), note: str = Form(""),
+        key: str = Form(""),
+        conn: sqlite3.Connection = Conn,
+    ):
+        posted = _posted_draft(
+            kind, program_id, instruction, from_team_id, to_team_id, from_name, to_name,
+            amount_cents, settlement_ask_cents, offer_id, operation_id, action, reason, note,
+        )
+        try:
+            parsed = drafts.draft_from_form(posted)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if isinstance(parsed, drafts.Refusal):
+            return _proposal_page(request, parsed, key or uuid.uuid4().hex[:12])
+        try:
+            outcome = drafts.confirm(
+                conn, parsed, key or uuid.uuid4().hex[:12], app.state.agent_version,
+            )
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if isinstance(outcome, drafts.Refusal):
+            return _proposal_page(request, outcome, key or uuid.uuid4().hex[:12])
+        return _back(drafts.confirm_path(outcome), outcome.message)
+
+    @app.post("/admin/abandon")
+    def admin_abandon(
+        kind: str = Form(""), program_id: str = Form(""), instruction: str = Form(""),
+        from_team_id: str = Form(""), to_team_id: str = Form(""),
+        from_name: str = Form(""), to_name: str = Form(""),
+        amount_cents: str = Form(""), settlement_ask_cents: str = Form(""),
+        offer_id: str = Form(""), operation_id: str = Form(""),
+        action: str = Form(""), reason: str = Form(""), note: str = Form(""),
+        key: str = Form(""),
+        conn: sqlite3.Connection = Conn,
+    ):
+        posted = _posted_draft(
+            kind, program_id, instruction, from_team_id, to_team_id, from_name, to_name,
+            amount_cents, settlement_ask_cents, offer_id, operation_id, action, reason, note,
+        )
+        try:
+            parsed = drafts.draft_from_form(posted)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if isinstance(parsed, drafts.Draft):
+            try:
+                drafts.abandon(conn, parsed, key)
+            except LookupError as exc:
+                raise HTTPException(404, str(exc)) from exc
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+        return _back("/", "Draft abandoned. The Issuer Ledger was not changed.")
 
     @app.get("/wallet")
     def wallet(request: Request, team_id: int | None = None, conn: sqlite3.Connection = Conn):

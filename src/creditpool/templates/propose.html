@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Draft · CreditPool{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>{% if refusal %}Draft refused{% else %}Confirm draft{% endif %}</h1>
+  <p>Confirm writes through the same Operation path as the forms. Abandon leaves the Issuer Ledger unchanged.</p>
+</div>
+<section class="panel">
+  <p class="muted">Instruction</p>
+  <p>{{ instruction }}</p>
+  {% if refusal %}
+  <p class="bad">{{ refusal.detail }}</p>
+  <p class="muted">{{ refusal.rule }}</p>
+  <p><a href="/">Back to the console</a></p>
+  {% else %}
+  <table>
+    <tr><th>Field</th><th>Draft</th></tr>
+    <tr><td>Type</td><td>{{ kind_label }}</td></tr>
+    {% if draft.from_name %}<tr><td>From</td><td>{{ draft.from_name }}</td></tr>{% endif %}
+    {% if draft.to_name %}<tr><td>To</td><td>{{ draft.to_name }}</td></tr>{% endif %}
+    {% if draft.amount_cents is not none %}<tr><td>Amount</td><td>{{ draft.amount_cents|usd }}</td></tr>{% endif %}
+    {% if draft.settlement_ask_cents is not none %}<tr><td>Settlement ask</td><td>{{ draft.settlement_ask_cents|usd }}</td></tr>{% endif %}
+    {% if draft.offer_id %}<tr><td>Offer</td><td>#{{ draft.offer_id }}</td></tr>{% endif %}
+    {% if draft.operation_id %}<tr><td>Operation</td><td>#{{ draft.operation_id }}</td></tr>{% endif %}
+    {% if draft.action %}<tr><td>Action</td><td>{{ draft.action }}</td></tr>{% endif %}
+    {% if draft.reason %}<tr><td>Reason</td><td>{{ draft.reason }}</td></tr>{% endif %}
+    {% if draft.note %}<tr><td>Note</td><td>{{ draft.note }}</td></tr>{% endif %}
+  </table>
+  <form method="post" action="/admin/confirm">
+    {% for name, value in fields.items() %}
+    <input type="hidden" name="{{ name }}" value="{{ value }}">
+    {% endfor %}
+    <input type="hidden" name="key" value="{{ key }}">
+    <div class="actions"><button type="submit">Confirm</button></div>
+  </form>
+  <form method="post" action="/admin/abandon">
+    {% for name, value in fields.items() %}
+    <input type="hidden" name="{{ name }}" value="{{ value }}">
+    {% endfor %}
+    <input type="hidden" name="key" value="{{ key }}">
+    <div class="actions"><button class="secondary" type="submit">Abandon</button></div>
+  </form>
+  {% endif %}
+  <form method="post" action="/admin/propose">
+    <input type="hidden" name="program_id" value="{{ program_id }}">
+    <label for="instruction">Edit the instruction</label>
+    <input id="instruction" name="instruction" value="{{ instruction }}">
+    <div class="actions"><button class="secondary" type="submit">Propose again</button></div>
+  </form>
+</section>
+{% endblock %}
