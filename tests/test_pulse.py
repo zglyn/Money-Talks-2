@@ -211,7 +211,9 @@ def test_seeded_console_shows_pulse_for_both_programs(tmp_path, monkeypatch):
     assert team_ids(live, "data-dry-team-ids") == ()
     assert re.search(r"Surplus Teams</div>\s*<div class=\"value\">12</div>", live)
     assert re.search(r"Dry Teams</div>\s*<div class=\"value\">0</div>", live)
-    assert href(live, "return") == f"/wallet?team_id={min(world.teams.values())}#return"
+    assert href(live, "return") == (
+        f"/wallet?team_id={world.teams[seed.SETTLED_TO_TEAM]}#return"
+    )
     assert href(live, "request") == "/wallet#request"
     assert 'href="/trades"' in live
 
