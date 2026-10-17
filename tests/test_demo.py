@@ -23,12 +23,45 @@ def dirty_teams(conn):
 
 def test_seed_matches_the_money_talks_2_shape(conn):
     world = seed.demo_world(conn)
+    delta = {tid: 0 for tid in world.teams.values()}
+    for row in conn.execute("SELECT from_team_id, to_team_id, amount_cents FROM trades"):
+        delta[row["from_team_id"]] -= row["amount_cents"]
+        delta[row["to_team_id"]] += row["amount_cents"]
 
     assert len(world.teams) == 12
-    assert all(money.ledger_balance(conn, tid) == 26_000 for tid in world.teams.values())
+    assert all(
+        money.ledger_balance(conn, tid) == 26_000 + delta[tid] for tid in world.teams.values()
+    )
     assert money.ledger_balance(conn, world.pool_id) == 0
     assert seed.seed_demo(conn) == world
     assert conn.execute("SELECT COUNT(*) FROM programs").fetchone()[0] == 2
+
+
+def test_seed_includes_an_open_offer_and_a_completed_trade(conn):
+    world = seed.demo_world(conn)
+    open_rows = conn.execute(
+        "SELECT note FROM offers WHERE status = 'open' AND program_id = ?",
+        (world.program_id,),
+    ).fetchall()
+    assert len(open_rows) >= 1
+    assert open_rows[0]["note"] == seed.OPEN_OFFER_NOTE
+
+    trade = conn.execute(
+        "SELECT * FROM trades WHERE program_id = ?", (world.program_id,)
+    ).fetchone()
+    assert trade["note"] == seed.SETTLED_TRADE_NOTE
+    assert trade["settlement_status"] == "external_paid"
+    op = money.get_operation(conn, trade["operation_id"])
+    assert op.status is money.Status.RECONCILED
+    assert op.agent_version == "v2"
+    assert money.ledger_balance(conn, trade["from_team_id"]) == 26_000 - trade["amount_cents"]
+    assert money.ledger_balance(conn, trade["to_team_id"]) == 26_000 + trade["amount_cents"]
+    assert money.ledger_fingerprint(conn, world.program_id).ok
+
+    seed.seed_demo(conn)
+    assert conn.execute("SELECT COUNT(*) FROM offers").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM operations").fetchone()[0] == 1
 
 
 def test_batch_is_about_sixty_operations_with_collapsed_duplicates(conn):
@@ -54,6 +87,7 @@ def test_v2_batch_has_no_failures_and_a_clean_reconciliation(conn):
 
 
 def test_v1_batch_shows_money_failures_and_reset_allows_a_v2_rerun(conn):
+    seeded = conn.execute("SELECT COUNT(*) FROM operations").fetchone()[0]
     snap = seed.snapshot(conn)
     seed.insert_batch(conn, "v1")
 
@@ -63,7 +97,7 @@ def test_v1_batch_shows_money_failures_and_reset_allows_a_v2_rerun(conn):
     assert dirty_teams(conn)
 
     seed.restore(conn, snap)
-    assert conn.execute("SELECT COUNT(*) FROM operations").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM operations").fetchone()[0] == seeded
     assert dirty_teams(conn) == []
 
     seed.insert_batch(conn, "v2")
@@ -179,7 +213,7 @@ def test_trade_board_queues_or_approves_a_reallocate_without_moving_settlement(c
     }
     client.post("/trades/offers", data=form)
     posted = client.post("/trades/offers", data=form, follow_redirects=True).text
-    assert posted.count('name="offer_id"') == 1
+    assert posted.count('name="offer_id"') == 2
     assert "pay outside" in posted and "$10.00" in posted and "$4.00" in posted
     offer_id = posted.split('name="offer_id" value="')[1].split('"')[0]
 
@@ -223,7 +257,7 @@ def test_trade_board_queues_or_approves_a_reallocate_without_moving_settlement(c
         follow_redirects=True,
     )
     assert again.status_code == 200
-    assert client.get("/operations").text.count("<td>reallocate</td>") == 1
+    assert client.get("/operations").text.count("<td>reallocate</td>") == 2
 
 
 def test_cancel_offer_stays_on_the_audit_log_and_moves_no_credit(client):
@@ -240,7 +274,8 @@ def test_cancel_offer_stays_on_the_audit_log_and_moves_no_credit(client):
     offer_id = page.split("/trades/offers/")[1].split("/cancel")[0]
     cancelled = client.post(f"/trades/offers/{offer_id}/cancel", follow_redirects=True).text
     assert "cancelled" in cancelled
-    assert 'name="offer_id"' not in cancelled
+    assert f'name="offer_id" value="{offer_id}"' not in cancelled
+    assert 'name="offer_id"' in cancelled
     assert ledger_stat(client, poster) == "$260.00"
     assert "offer_cancelled" in client.get("/audit").text
 
@@ -264,3 +299,65 @@ def test_one_click_approve_uses_the_operations_processor(client):
     assert "reconciled" in approved
     assert ledger_stat(client, poster) == "$250.00"
     assert ledger_stat(client, receiver) == "$270.00"
+
+
+def _no_buy_sell(text: str) -> None:
+    folded = text.lower()
+    assert "buy" not in folded and "sell" not in folded
+
+
+def test_demo_ops_package_stays_v2_and_reaches_the_new_surfaces(client):
+    client.post("/demo/seed")
+    demo = client.get("/demo").text
+    assert "Agent Version v2" in demo
+    assert "Agent Version v1" not in demo
+    assert "Ledger Fingerprint OK" in demo
+    assert "Ledger Fingerprint drift" not in demo
+    assert seed.OPEN_OFFER_NOTE in demo
+    assert seed.SETTLED_TRADE_NOTE in demo
+    assert 'href="/configure">Policy Preset</a>' in demo
+    assert 'href="/#instruct">NL Admin</a>' in demo
+    _no_buy_sell(demo)
+
+    board = client.get("/trades").text
+    assert seed.OPEN_OFFER_NOTE in board
+    assert seed.SETTLED_TRADE_NOTE in board
+    assert "external_paid" in board
+    assert "off-ledger" in board and "not custodied" in board
+    _no_buy_sell(board)
+
+    home = client.get("/").text
+    pulse = home.split('class="program-pulse"', 1)[1].split("</section>", 1)[0]
+    assert 'href="/trades"' in pulse
+    assert ">Offer</a>" in pulse
+    assert "<h2>NL Admin</h2>" in home
+    assert 'action="/admin/propose"' in home
+    _no_buy_sell(home)
+    offer = client.get("/trades")
+    assert offer.status_code == 200
+    assert seed.OPEN_OFFER_NOTE in offer.text
+
+    rules = client.get("/configure").text
+    assert "Policy Preset" in rules
+    assert "Hackathon weekend" in rules
+    _no_buy_sell(rules)
+
+    proposed = client.post(
+        "/admin/propose",
+        data={"program_id": "1", "instruction": "return 10 from Team 01"},
+    )
+    assert proposed.status_code == 200
+    assert "Team 01" in proposed.text
+    assert "$10.00" in proposed.text
+    assert 'action="/admin/confirm"' in proposed.text
+
+    forced = client.post("/demo/run", data={"version": "v1"}, follow_redirects=True)
+    assert forced.status_code == 200
+    ops = client.get("/operations").text
+    assert ">v2<" in ops
+    assert ">v1<" not in ops
+    after = client.get("/demo").text
+    assert "Ledger Fingerprint OK" in after
+    assert "Ledger Fingerprint drift" not in after
+    assert seed.SETTLED_TRADE_NOTE in client.get("/trades").text
+    assert "Program pulse" in client.get("/").text

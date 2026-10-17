@@ -49,13 +49,15 @@ Open http://127.0.0.1:8000. The database is the file named by `CREDITPOOL_DB` (d
 
 ## Demo flow
 
-1. Open **Demo control** and press **Seed demo**. This creates 12 Teams with a $260 Grant each, a $600 cap, a Program Pool, an expired second Program, and a snapshot.
-2. Set the Agent Version to **v1** and press **Insert and process batch**. About 60 Operations run: normal, concurrent drain pairs, over-cap, ineligible, expired, and duplicate Idempotency Keys.
-3. Open **Reconciliation**. v1 applies without a Reservation or full Program Rules, so Teams show red mismatches and Operations fail Reconcile.
-4. Back on Demo control, press **Reset to snapshot**, set **v2**, and run the same batch.
-5. Reconciliation is clean. Risky moves are Flagged instead, and every Operation shows 6 or more tool steps in its agent run.
+The demo path is Agent Version v2 only.
 
-Other pages: **Program console** (budget used and remaining), **Program Rules** (`/configure`, apply a Policy Preset and edit budget, per-Team cap, eligibility stance, Returns allowed, and expiry offset before Grants), **Team wallet** (Return and Request forms), **Operations** (queue, claim owner, agent run and PRISM trace id), **Audit log** (filter by Operation number).
+1. Open **Demo control** and press **Seed demo**. This creates 12 Teams with a $260 Grant each, a $600 cap, a Program Pool, an expired second Program, one open Offer, one completed Trade with a Settlement note, and a snapshot.
+2. Read the Ledger Fingerprint on Demo control, then press **Process batch** (or **Seed and run batch**). About 60 Operations run on Agent Version v2: normal, concurrent drain pairs, over-cap, ineligible, expired, and duplicate Idempotency Keys.
+3. Open **Reconciliation**. The Ledger Fingerprint stays OK. Risky moves are Flagged, and every processed Operation shows 6 or more tool steps in its agent run.
+4. **Reset** restores the snapshot, including the seeded Offer and Trade.
+5. From Demo control, open the **Trade board** (the Program pulse Offer link lands there too), **Policy Preset** (`/configure`), and **NL Admin** (propose a draft on the Program console). Confirm is the only Credit write.
+
+Other pages: **Program console** (budget, Ledger Fingerprint, Program pulse, NL Admin), **Program Rules** (`/configure`, apply a Policy Preset and edit budget, per-Team cap, eligibility stance, Returns allowed, and expiry offset before Grants), **Team wallet** (Return and Request forms), **Trade board** (Offer, Trade, off-ledger Settlement), **Operations** (queue, claim owner, agent run and PRISM trace id), **Audit log** (filter by Operation number).
 
 ## Worker
 

@@ -7,8 +7,8 @@
 </div>
 {% if programs %}
 <section class="panel" id="instruct">
-  <h2>Propose a draft</h2>
-  <p class="muted">Type a Return, Request, Reallocate, Offer, Accept, or Flagged resolution. Confirm writes through the same path as the forms. Abandon leaves the Issuer Ledger unchanged.</p>
+  <h2>NL Admin</h2>
+  <p class="muted">Propose a draft: Return, Request, Reallocate, Offer, Accept, or Flagged resolution. Confirm writes through the same path as the forms. Abandon leaves the Issuer Ledger unchanged.</p>
   <p class="muted">Offline, use a line such as <code>return 25 from Alpha</code>, <code>request 25 for Beta</code>, <code>reallocate 50 from Alpha to Beta</code>, <code>offer 10 from Alpha for 4</code>, <code>accept offer 1 as Beta</code>, or <code>retry flagged 3</code>.</p>
   <form method="post" action="/admin/propose">
     {% if programs|length > 1 %}

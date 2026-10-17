@@ -17,6 +17,15 @@ TEAM_COUNT = 12
 GRANT_CENTS = 26_000
 CAP_CENTS = 60_000
 INELIGIBLE_TEAM = "Team 12"
+OPEN_OFFER_TEAM = "Team 09"
+OPEN_OFFER_CENTS = 2_000
+OPEN_OFFER_ASK_CENTS = 800
+OPEN_OFFER_NOTE = "settle outside CreditPool"
+SETTLED_FROM_TEAM = "Team 10"
+SETTLED_TO_TEAM = "Team 11"
+SETTLED_TRADE_CENTS = 1_000
+SETTLED_TRADE_ASK_CENTS = 400
+SETTLED_TRADE_NOTE = "Team 11 pays Team 10 outside CreditPool"
 
 
 @dataclass(frozen=True)
@@ -64,16 +73,19 @@ def demo_world(conn: sqlite3.Connection) -> DemoWorld:
 
 
 def seed_demo(conn: sqlite3.Connection, now: float | None = None) -> DemoWorld:
-    """Create both Programs, their Teams and Grants. Safe to call twice."""
+    """Create both Programs, their Teams, Grants, one open Offer, and one completed Trade. Safe to call twice."""
     t = time.time() if now is None else now
     if _program_id(conn, PROGRAM_NAME) is None:
         program_id = money.create_program(
             conn, PROGRAM_NAME, TEAM_COUNT * GRANT_CENTS, CAP_CENTS, t + 7 * 86_400, now=t
         )
+        teams: dict[str, int] = {}
         for n in range(1, TEAM_COUNT + 1):
             name = f"Team {n:02d}"
             team_id = money.add_team(conn, program_id, name, eligible=name != INELIGIBLE_TEAM)
             money.grant(conn, team_id, GRANT_CENTS, now=t)
+            teams[name] = team_id
+        _seed_peer_deals(conn, program_id, teams, t)
     if _program_id(conn, EXPIRED_PROGRAM_NAME) is None:
         expired_id = money.create_program(
             conn, EXPIRED_PROGRAM_NAME, 30_000, 20_000, t - 86_400, now=t - 30 * 86_400
@@ -81,6 +93,28 @@ def seed_demo(conn: sqlite3.Connection, now: float | None = None) -> DemoWorld:
         for name in ("Legacy A", "Legacy B", "Legacy C"):
             money.grant(conn, money.add_team(conn, expired_id, name), 10_000, now=t)
     return demo_world(conn)
+
+
+def _seed_peer_deals(
+    conn: sqlite3.Connection, program_id: int, teams: dict[str, int], now: float
+) -> None:
+    """One open Offer, and one v2 Trade whose Credit leg is reconciled and whose Settlement has a note."""
+    money.post_offer(
+        conn, program_id, teams[OPEN_OFFER_TEAM], OPEN_OFFER_CENTS, OPEN_OFFER_ASK_CENTS,
+        "demo-offer-open", OPEN_OFFER_NOTE, now=now,
+    )
+    posted = money.post_offer(
+        conn, program_id, teams[SETTLED_FROM_TEAM], SETTLED_TRADE_CENTS, SETTLED_TRADE_ASK_CENTS,
+        "demo-offer-settled", SETTLED_TRADE_NOTE, now=now,
+    )
+    trade = money.accept_offer(
+        conn, posted.id, teams[SETTLED_TO_TEAM], "demo-trade-settled",
+        agent_version="v2", now=now,
+    )
+    done = money.process_operation(conn, trade.operation_id, now=now)
+    if done.status is not money.Status.RECONCILED:
+        raise RuntimeError(f"demo Trade did not reconcile: {done.status.value} {done.flag_reason}")
+    money.record_settlement(conn, trade.id, "external_paid", note=SETTLED_TRADE_NOTE, now=now)
 
 
 def snapshot(conn: sqlite3.Connection) -> bytes:

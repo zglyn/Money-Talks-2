@@ -3,12 +3,12 @@
 {% block content %}
 <div class="page-head">
   <h1>Demo control</h1>
-  <p>Seed the MONEY TALKS Program, pin Nicrron, then run the safe reallocation batch.</p>
+  <p>Seed the MONEY TALKS Program, pin Nicrron, then run the reallocation batch on Agent Version v2.</p>
 </div>
 
 <div class="panel" style="border-color: rgba(15,118,110,0.35)">
   <h2>Full demo</h2>
-  <p class="muted">Seeds sample data (if needed), inserts ~60 Operations, and processes them with the safe agent (reservations + Program Rules). Risky moves are Flagged; Reconciliation stays clean.</p>
+  <p class="muted">Seeds sample data (if needed), inserts ~60 Operations, and processes them with Agent Version v2 (Reservations + Program Rules). Risky moves are Flagged; Reconciliation stays clean. Trade and Offer stay on that same path.</p>
   <div class="actions">
     <form method="post" action="/demo/run-full"><button type="submit">Seed and run batch</button></form>
   </div>
@@ -29,7 +29,7 @@
       <form method="post" action="/demo/snapshot" class="inline"><button class="secondary" type="submit" {{ "disabled" if not seeded }}>Snapshot</button></form>
       <form method="post" action="/demo/reset" class="inline"><button class="secondary" type="submit" {{ "disabled" if not has_snapshot }}>Reset</button></form>
     </div>
-    <p class="muted">12 Teams, $260 Grant each, $600 cap, a Program Pool, and an expired Program.</p>
+    <p class="muted">12 Teams, $260 Grant each, $600 cap, a Program Pool, an expired Program, one open Offer, and one completed Trade with a Settlement note.</p>
   </div>
   <div class="panel">
     <h2>Pin model</h2>
@@ -45,7 +45,7 @@
     <div class="actions">
       <form method="post" action="/demo/run"><button type="submit" {{ "disabled" if not seeded }}>Process batch</button></form>
     </div>
-    <p class="muted">Uses existing seed. Safe agent only.</p>
+    <p class="muted">Uses the existing seed. Agent Version v2 only.</p>
   </div>
 </div>
 
@@ -60,6 +60,28 @@
   {% else %}
   <p class="muted">Seed a Program to compute a Ledger Fingerprint.</p>
   {% endfor %}
+</div>
+
+<div class="panel">
+  <h2>Offer and Trade</h2>
+  <p class="muted">Settlement is off-ledger and not custodied by CreditPool. The Credit leg of a Trade is a Reallocate.</p>
+  {% for o in open_offers %}
+  <p>Open Offer · {{ o.team_name }} · {{ o.amount_cents|usd }} Credit · Settlement ask {{ o.settlement_ask_cents|usd }}{% if o.note %} · {{ o.note }}{% endif %}</p>
+  {% else %}
+  <p class="muted">No open Offer.</p>
+  {% endfor %}
+  {% for tr in completed_trades %}
+  <p>Completed Trade · {{ tr.from_name }} → {{ tr.to_name }} · {{ tr.amount_cents|usd }} Credit · Settlement {{ tr.settlement_status }} · {{ tr.note }}</p>
+  {% else %}
+  <p class="muted">No completed Trade.</p>
+  {% endfor %}
+  <p><a href="/trades">Trade board</a></p>
+</div>
+
+<div class="panel">
+  <h2>Admin</h2>
+  <p class="muted">Policy Preset fills Program Rules. NL Admin proposes a draft and writes Credit only after confirm.</p>
+  <p><a href="/configure">Policy Preset</a> · <a href="/#instruct">NL Admin</a></p>
 </div>
 
 <h2>Operation status</h2>

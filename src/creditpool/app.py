@@ -570,18 +570,26 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
     @app.get("/demo")
     def demo(request: Request, conn: sqlite3.Connection = Conn):
+        completed = [
+            row for row in report.trades(conn)
+            if row["operation_status"] == "reconciled" and row["note"]
+        ]
         return page(
             request, "demo.html", counts=report.status_counts(conn),
             programs=report.programs(conn),
             seeded=conn.execute("SELECT COUNT(*) FROM programs").fetchone()[0] > 0,
             has_snapshot=snapshot_path.exists(), last_run=request.app.state.last_run,
+            open_offers=report.offers(conn, "open"), completed_trades=completed,
         )
 
     @app.post("/demo/seed")
     def demo_seed(conn: sqlite3.Connection = Conn):
         seed.seed_demo(conn)
         snapshot_path.write_bytes(seed.snapshot(conn))
-        return _back("/demo", "Seeded 12 Teams and an expired Program; snapshot saved")
+        return _back(
+            "/demo",
+            "Seeded 12 Teams, an open Offer, a completed Trade, and an expired Program; snapshot saved",
+        )
 
     @app.post("/demo/snapshot")
     def demo_snapshot(conn: sqlite3.Connection = Conn):
