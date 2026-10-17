@@ -30,12 +30,12 @@ TEMPLATES.env.filters["when"] = lambda ts: (
 TEMPLATES.env.filters["secs_left"] = lambda expires, now: max(0, int(expires - now))
 
 
-def _cents(amount: str) -> int:
+def _cents(amount: str, *, allow_zero: bool = False) -> int:
     try:
         cents = int((Decimal(amount) * 100).to_integral_exact())
     except (InvalidOperation, ValueError):
         raise HTTPException(400, f"not a dollar amount: {amount!r}")
-    if cents <= 0:
+    if cents < 0 or (cents == 0 and not allow_zero):
         raise HTTPException(400, "amount must be positive")
     return cents
 
@@ -58,6 +58,15 @@ def _optional_program_id(value: str) -> int | None:
         return int(text)
     except ValueError:
         raise HTTPException(400, "program_id must be an integer") from None
+
+
+def _invoke(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 def _back(path: str, msg: str) -> RedirectResponse:
@@ -351,6 +360,64 @@ def create_app(db_path: str | None = None) -> FastAPI:
         op = _submit(conn, "request", team_id, amount, key)
         return _back("/operations", f"Request queued as Operation #{op.id}")
 
+    @app.get("/trades")
+    def trades(request: Request, conn: sqlite3.Connection = Conn):
+        views = report.programs(conn)
+        teams = [(p, t) for p in views for t in p.teams if not t.is_pool]
+        open_offers = report.offers(conn, "open")
+        return page(
+            request, "trades.html", teams=teams, offers=open_offers, trades=report.trades(conn),
+            key=uuid.uuid4().hex[:12],
+            accept_keys={row["id"]: uuid.uuid4().hex[:12] for row in open_offers},
+        )
+
+    @app.post("/trades/offers")
+    def post_offer(
+        team_id: int = Form(), amount: str = Form(), settlement_ask: str = Form(),
+        note: str = Form(""), key: str = Form(""),
+        conn: sqlite3.Connection = Conn,
+    ):
+        team = conn.execute("SELECT * FROM teams WHERE id = ?", (team_id,)).fetchone()
+        if team is None or team["is_pool"]:
+            raise HTTPException(400, "pick a Team")
+        offer = _invoke(
+            money.post_offer, conn, team["program_id"], team_id, _cents(amount),
+            _cents(settlement_ask, allow_zero=True), f"ui-offer-{key or uuid.uuid4().hex}",
+            note.strip(),
+        )
+        return _back("/trades", f"Offer #{offer.id} posted")
+
+    @app.post("/trades/offers/{offer_id}/cancel")
+    def cancel_offer(offer_id: int, conn: sqlite3.Connection = Conn):
+        offer = _invoke(money.cancel_offer, conn, offer_id)
+        return _back("/trades", f"Offer #{offer.id} cancelled")
+
+    @app.post("/trades/accept")
+    def accept_offer(
+        offer_id: int = Form(), to_team_id: int = Form(), key: str = Form(""),
+        approve: str = Form(""),
+        conn: sqlite3.Connection = Conn,
+    ):
+        trade = _invoke(
+            money.accept_offer, conn, offer_id, to_team_id,
+            f"ui-trade-{key or uuid.uuid4().hex}",
+            agent_version=app.state.agent_version,
+        )
+        op = money.get_operation(conn, trade.operation_id)
+        if approve == "1" and op.status is money.Status.REQUESTED:
+            claim_and_process_loop(conn, "ui-trade", default_llm())
+            op = money.get_operation(conn, trade.operation_id)
+        if op.status is money.Status.REQUESTED:
+            return _back("/trades", f"Trade #{trade.id} queued Reallocate #{op.id}")
+        return _back("/trades", f"Trade #{trade.id} Reallocate #{op.id} {op.status.value}")
+
+    @app.post("/trades/{trade_id}/settlement")
+    def record_settlement(
+        trade_id: int, status: str = Form(), conn: sqlite3.Connection = Conn,
+    ):
+        trade = _invoke(money.record_settlement, conn, trade_id, status)
+        return _back("/trades", f"Trade #{trade.id} Settlement {trade.settlement_status.value}")
+
     @app.get("/operations")
     def operations(request: Request, status: str | None = None, conn: sqlite3.Connection = Conn):
         return page(
@@ -387,11 +454,13 @@ def create_app(db_path: str | None = None) -> FastAPI:
         buf = io.StringIO()
         w = csv.writer(buf)
         w.writerow([
-            "id", "operation_id", "program_id", "program_name", "created_at", "actor", "step", "detail",
+            "id", "operation_id", "program_id", "program_name", "offer_id", "trade_id",
+            "created_at", "actor", "step", "detail",
         ])
         for e in events:
             w.writerow([
-                e["id"], e["operation_id"] or "", e["program_id"] or "", e["program_name"],
+                e["id"], e["operation_id"] or "", e["program_id"] or "", e["program_name"] or "",
+                e["offer_id"] or "", e["trade_id"] or "",
                 datetime.fromtimestamp(e["created_at"], timezone.utc).isoformat(),
                 e["actor"], e["step"], e["detail"],
             ])

@@ -77,7 +77,9 @@ def client(tmp_path):
 
 
 def test_every_page_renders_brand(client):
-    for path in ("/", "/configure", "/wallet", "/operations", "/reconciliation", "/audit", "/demo"):
+    for path in (
+        "/", "/configure", "/wallet", "/trades", "/operations", "/reconciliation", "/audit", "/demo",
+    ):
         response = client.get(path)
         assert response.status_code == 200
         assert "CreditPool" in response.text
@@ -145,5 +147,120 @@ def test_wallet_return_is_idempotent_and_processed_from_the_queue(client):
 
 
 def seed_team_id(client) -> int:
+    return team_ids(client)[0]
+
+
+def team_ids(client) -> list[int]:
     page = client.get("/wallet").text
-    return int(page.split('<option value="')[1].split('"')[0])
+    return [int(part.split('"')[0]) for part in page.split('<option value="')[1:]]
+
+
+def ledger_stat(client, team_id: int) -> str:
+    page = client.get(f"/wallet?team_id={team_id}").text
+    chunk = page.split("Ledger balance", 1)[1][:180]
+    start = chunk.index("$")
+    end = chunk.index("</div>", start)
+    return chunk[start:end]
+
+
+def test_trade_board_queues_or_approves_a_reallocate_without_moving_settlement(client):
+    client.post("/demo/seed")
+    poster, receiver = team_ids(client)[:2]
+    assert ledger_stat(client, poster) == "$260.00"
+    assert ledger_stat(client, receiver) == "$260.00"
+
+    board = client.get("/trades").text
+    assert "off-ledger" in board and "not custodied" in board
+    assert "buy" not in board.lower() and "sell" not in board.lower()
+
+    form = {
+        "team_id": poster, "amount": "10.00", "settlement_ask": "4.00",
+        "note": "pay outside", "key": "offer-1",
+    }
+    client.post("/trades/offers", data=form)
+    posted = client.post("/trades/offers", data=form, follow_redirects=True).text
+    assert posted.count('name="offer_id"') == 1
+    assert "pay outside" in posted and "$10.00" in posted and "$4.00" in posted
+    offer_id = posted.split('name="offer_id" value="')[1].split('"')[0]
+
+    queued = client.post(
+        "/trades/accept",
+        data={"offer_id": offer_id, "to_team_id": receiver, "key": "acc-queue"},
+        follow_redirects=True,
+    ).text
+    assert "queued Reallocate" in queued
+    assert ledger_stat(client, poster) == "$260.00"
+
+    ops = client.get("/operations").text
+    assert 'class="tag requested"' in ops
+    trade_id = queued.split("Trade #")[1].split(" ")[0]
+    assert f'href="/trades">{trade_id}</a>' in ops
+
+    client.post("/operations/process")
+    assert ledger_stat(client, poster) == "$250.00"
+    assert ledger_stat(client, receiver) == "$270.00"
+    done = client.get("/operations").text
+    assert "reconciled" in done
+
+    settled = client.post(
+        f"/trades/{trade_id}/settlement",
+        data={"status": "external_paid"},
+        follow_redirects=True,
+    ).text
+    assert "Settlement external_paid" in settled
+    assert "pay outside" in settled
+    assert ledger_stat(client, poster) == "$250.00"
+    assert ledger_stat(client, receiver) == "$270.00"
+
+    audit = client.get("/audit").text
+    assert "offer_created" in audit
+    assert "offer_accepted" in audit
+    assert "settlement" in audit
+
+    again = client.post(
+        "/trades/accept",
+        data={"offer_id": offer_id, "to_team_id": receiver, "key": "acc-queue"},
+        follow_redirects=True,
+    )
+    assert again.status_code == 200
+    assert client.get("/operations").text.count("<td>reallocate</td>") == 1
+
+
+def test_cancel_offer_stays_on_the_audit_log_and_moves_no_credit(client):
+    client.post("/demo/seed")
+    poster = team_ids(client)[0]
+    client.post(
+        "/trades/offers",
+        data={
+            "team_id": poster, "amount": "5.00", "settlement_ask": "1.00",
+            "note": "", "key": "offer-cancel",
+        },
+    )
+    page = client.get("/trades").text
+    offer_id = page.split("/trades/offers/")[1].split("/cancel")[0]
+    cancelled = client.post(f"/trades/offers/{offer_id}/cancel", follow_redirects=True).text
+    assert "cancelled" in cancelled
+    assert 'name="offer_id"' not in cancelled
+    assert ledger_stat(client, poster) == "$260.00"
+    assert "offer_cancelled" in client.get("/audit").text
+
+
+def test_one_click_approve_uses_the_operations_processor(client):
+    client.post("/demo/seed")
+    poster, receiver = team_ids(client)[:2]
+    client.post(
+        "/trades/offers",
+        data={
+            "team_id": poster, "amount": "10.00", "settlement_ask": "0.00",
+            "note": "recorded only", "key": "offer-approve",
+        },
+    )
+    offer_id = client.get("/trades").text.split('name="offer_id" value="')[1].split('"')[0]
+    approved = client.post(
+        "/trades/accept",
+        data={"offer_id": offer_id, "to_team_id": receiver, "key": "acc-approve", "approve": "1"},
+        follow_redirects=True,
+    ).text
+    assert "reconciled" in approved
+    assert ledger_stat(client, poster) == "$250.00"
+    assert ledger_stat(client, receiver) == "$270.00"
