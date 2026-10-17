@@ -13,8 +13,9 @@
     <form method="post" action="/demo/run-full"><button type="submit">Seed and run batch</button></form>
   </div>
   {% if last_run %}
-  <div class="status-line ok" style="margin-top:14px">
+  <div class="status-line {{ 'ok' if last_run.fingerprint_ok else 'bad' }}" style="margin-top:14px">
     Batch done · {{ last_run.operations }} Operations · flagged {{ last_run.outcomes.get('flagged', 0) }} · failed {{ last_run.outcomes.get('failed', 0) }} · mismatches {{ last_run.mismatch_teams }}
+    · Ledger Fingerprint {{ "OK" if last_run.fingerprint_ok else "drift" }}
   </div>
   <p><a href="/reconciliation">Open Reconciliation →</a> · <a href="/operations">Operations →</a></p>
   {% endif %}
@@ -46,6 +47,19 @@
     </div>
     <p class="muted">Uses existing seed. Safe agent only.</p>
   </div>
+</div>
+
+<div class="panel">
+  <h2>Ledger Fingerprint</h2>
+  <p class="muted">Program and Team balances plus Operation identity. Read it before Reset and after the batch. Drift is a money failure.</p>
+  {% for p in programs %}
+  <p class="status-line {{ 'ok' if p.fingerprint_ok else 'bad' }}">
+    {{ p.name }} · Ledger Fingerprint {{ "OK" if p.fingerprint_ok else "drift" }}
+    <code>{{ p.fingerprint_digest[:12] }}</code>
+  </p>
+  {% else %}
+  <p class="muted">Seed a Program to compute a Ledger Fingerprint.</p>
+  {% endfor %}
 </div>
 
 <h2>Operation status</h2>

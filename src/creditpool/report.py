@@ -58,6 +58,8 @@ class ProgramView:
     expired: bool
     returns_allowed: bool
     pulse: ProgramPulse
+    fingerprint_digest: str = ""
+    fingerprint_ok: bool = True
     teams: list[TeamRow] = field(default_factory=list)
 
     @property
@@ -151,12 +153,14 @@ def programs(conn: sqlite3.Connection, now: float | None = None) -> list[Program
                 "SELECT * FROM teams WHERE program_id = ? ORDER BY is_pool DESC, id", (p["id"],)
             )
         ]
+        fingerprint = money.ledger_fingerprint(conn, p["id"])
         views.append(ProgramView(
             id=p["id"], name=p["name"], total_budget_cents=p["total_budget_cents"],
             used_cents=money.program_total(conn, p["id"]),
             per_team_cap_cents=p["per_team_cap_cents"], expires_at=p["expires_at"],
-            expired=t >= p["expires_at"], returns_allowed=bool(p["returns_allowed"]), teams=teams,
+            expired=t >= p["expires_at"], returns_allowed=bool(p["returns_allowed"]),
             pulse=program_pulse(teams, p["expires_at"], t),
+            fingerprint_digest=fingerprint.digest, fingerprint_ok=fingerprint.ok, teams=teams,
         ))
     return views
 

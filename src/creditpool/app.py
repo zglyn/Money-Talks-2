@@ -81,6 +81,7 @@ def _alerts_from_runs(runs) -> list[dict]:
 def _run_batch(conn: sqlite3.Connection, version: str, worker_id: str) -> dict:
     batch = seed.insert_batch(conn, version)
     runs = claim_and_process_loop(conn, worker_id, default_llm())
+    views = report.programs(conn)
     return {
         "agent_version": version,
         "submitted": batch.submitted,
@@ -90,9 +91,8 @@ def _run_batch(conn: sqlite3.Connection, version: str, worker_id: str) -> dict:
         "steps_min": min((len(r.steps) for r in runs), default=0),
         "alerts": _alerts_from_runs(runs),
         "failed": sum(1 for r in runs if not r.ok),
-        "mismatch_teams": sum(
-            1 for p in report.programs(conn) for t in p.teams if t.mismatches
-        ),
+        "mismatch_teams": sum(1 for p in views for t in p.teams if t.mismatches),
+        "fingerprint_ok": all(p.fingerprint_ok for p in views),
     }
 
 
@@ -261,6 +261,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
     def demo(request: Request, conn: sqlite3.Connection = Conn):
         return page(
             request, "demo.html", counts=report.status_counts(conn),
+            programs=report.programs(conn),
             seeded=conn.execute("SELECT COUNT(*) FROM programs").fetchone()[0] > 0,
             has_snapshot=snapshot_path.exists(), last_run=request.app.state.last_run,
         )

@@ -21,6 +21,10 @@
     <div class="stat"><div class="label">Remaining</div><div class="value">{{ p.remaining_cents|usd }}</div></div>
     <div class="stat"><div class="label">Per-Team cap</div><div class="value">{{ p.per_team_cap_cents|usd }}</div></div>
   </div>
+  <p class="status-line {{ 'ok' if p.fingerprint_ok else 'bad' }}">
+    Ledger Fingerprint {{ "OK" if p.fingerprint_ok else "drift" }}
+    <code>{{ p.fingerprint_digest[:12] }}</code>
+  </p>
   <p class="muted">Expires {{ p.expires_at|when }} · Returns {{ "allowed" if p.returns_allowed else "disabled" }}</p>
   {% if report.program_mismatches(p) %}<p class="bad">Program total exceeds budget.</p>{% endif %}
 
