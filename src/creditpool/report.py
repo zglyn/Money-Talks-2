@@ -106,12 +106,14 @@ def failed_reconciles(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 def operations(conn: sqlite3.Connection, status: str | None = None) -> list[sqlite3.Row]:
     sql = (
         "SELECT o.*, s.name AS from_name, d.name AS to_name, p.name AS program_name,"
+        " tr.id AS trade_id,"
         " (SELECT outcome FROM agent_runs r WHERE r.operation_id = o.id ORDER BY r.id DESC LIMIT 1)"
         "   AS run_outcome,"
         " (SELECT prism_trace_id FROM agent_runs r WHERE r.operation_id = o.id ORDER BY r.id DESC LIMIT 1)"
         "   AS trace_id"
         " FROM operations o JOIN teams s ON s.id = o.from_team_id JOIN teams d ON d.id = o.to_team_id"
         " JOIN programs p ON p.id = o.program_id"
+        " LEFT JOIN trades tr ON tr.operation_id = o.id"
     )
     if status:
         return conn.execute(sql + " WHERE o.status = ? ORDER BY o.id DESC", (status,)).fetchall()
@@ -123,6 +125,28 @@ def audit_events(conn: sqlite3.Connection, operation_id: int | None = None) -> l
     if operation_id is None:
         return conn.execute(sql + " ORDER BY id DESC LIMIT 500").fetchall()
     return conn.execute(sql + " WHERE operation_id = ? ORDER BY id", (operation_id,)).fetchall()
+
+
+def offers(conn: sqlite3.Connection, status: str | None = None) -> list[sqlite3.Row]:
+    sql = (
+        "SELECT o.*, t.name AS team_name, p.name AS program_name"
+        " FROM offers o JOIN teams t ON t.id = o.team_id JOIN programs p ON p.id = o.program_id"
+    )
+    if status:
+        return conn.execute(sql + " WHERE o.status = ? ORDER BY o.id DESC", (status,)).fetchall()
+    return conn.execute(sql + " ORDER BY o.id DESC").fetchall()
+
+
+def trades(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT tr.*, s.name AS from_name, d.name AS to_name, p.name AS program_name,"
+        " op.status AS operation_status, op.type AS operation_type"
+        " FROM trades tr"
+        " JOIN teams s ON s.id = tr.from_team_id JOIN teams d ON d.id = tr.to_team_id"
+        " JOIN programs p ON p.id = tr.program_id"
+        " JOIN operations op ON op.id = tr.operation_id"
+        " ORDER BY tr.id DESC"
+    ).fetchall()
 
 
 def status_counts(conn: sqlite3.Connection) -> dict[str, int]:

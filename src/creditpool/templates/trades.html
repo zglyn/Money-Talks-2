@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Trade board · CreditPool{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Trade board</h1>
+  <p>Teams post an Offer of Program Credit and a Settlement ask. Accepting creates a Trade and queues a Reallocate. Settlement is off-ledger and not custodied by CreditPool.</p>
+</div>
+
+{% if not teams %}
+  <div class="panel"><p class="muted" style="margin:0">No Teams yet. Seed the demo from <a href="/demo">Demo control</a>.</p></div>
+{% else %}
+<form class="panel" method="post" action="/trades/offers">
+  <h2>Post an Offer</h2>
+  <input type="hidden" name="key" value="{{ key }}">
+  <label for="team_id">Team</label>
+  <select id="team_id" name="team_id">
+    {% for p, t in teams %}
+      <option value="{{ t.id }}">{{ p.name }} / {{ t.name }}</option>
+    {% endfor %}
+  </select>
+  <label for="amount">Credit amount (USD)</label>
+  <input id="amount" name="amount" value="10.00" inputmode="decimal">
+  <label for="settlement_ask">Settlement ask (USD)</label>
+  <input id="settlement_ask" name="settlement_ask" value="4.00" inputmode="decimal">
+  <label for="note">Settlement note</label>
+  <input id="note" name="note" placeholder="How the Teams settle outside CreditPool">
+  <div class="actions"><button type="submit">Post Offer</button></div>
+</form>
+{% endif %}
+
+<h2>Open Offers</h2>
+<table>
+  <tr><th>Program</th><th>Team</th><th class="num">Credit</th><th class="num">Settlement ask</th><th>Note</th><th></th></tr>
+  {% for o in offers %}
+  <tr>
+    <td>{{ o.program_name }}</td>
+    <td>{{ o.team_name }}</td>
+    <td class="num">{{ o.amount_cents|usd }}</td>
+    <td class="num">{{ o.settlement_ask_cents|usd }}</td>
+    <td>{{ o.note }}</td>
+    <td>
+      <form method="post" action="/trades/offers/{{ o.id }}/cancel" class="inline">
+        <button class="secondary" type="submit">Cancel</button>
+      </form>
+      <form method="post" action="/trades/accept">
+        <input type="hidden" name="offer_id" value="{{ o.id }}">
+        <input type="hidden" name="key" value="{{ accept_keys[o.id] }}">
+        <label>Receiving Team</label>
+        <select name="to_team_id">
+          {% for p, t in teams if t.id != o.team_id %}
+            <option value="{{ t.id }}">{{ p.name }} / {{ t.name }}</option>
+          {% endfor %}
+        </select>
+        <div class="actions">
+          <button type="submit">Accept</button>
+          <button class="secondary" type="submit" name="approve" value="1">Approve Credit</button>
+        </div>
+      </form>
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6" class="muted">No open Offers.</td></tr>
+  {% endfor %}
+</table>
+<p class="muted">Accept queues the Reallocate. Approve Credit runs that same Operations processor.</p>
+
+<h2>Trades</h2>
+<p class="muted">Settlement is off-ledger and not custodied by CreditPool.</p>
+<table>
+  <tr>
+    <th>#</th><th>From</th><th>To</th><th class="num">Credit</th>
+    <th>Settlement (off-ledger, not custodied)</th><th>Reallocate</th><th></th>
+  </tr>
+  {% for tr in trades %}
+  <tr>
+    <td>{{ tr.id }}</td>
+    <td>{{ tr.from_name }}</td>
+    <td>{{ tr.to_name }}</td>
+    <td class="num">{{ tr.amount_cents|usd }}</td>
+    <td>
+      <span class="tag">{{ tr.settlement_status }}</span>
+      {{ tr.settlement_ask_cents|usd }}
+      {% if tr.note %}<div class="muted">{{ tr.note }}</div>{% endif %}
+    </td>
+    <td>
+      <a href="/audit?operation_id={{ tr.operation_id }}">#{{ tr.operation_id }}</a>
+      <span class="tag {{ tr.operation_status }}">{{ tr.operation_status }}</span>
+    </td>
+    <td>
+      <form method="post" action="/trades/{{ tr.id }}/settlement" class="inline">
+        <select name="status">
+          <option value="simulated" {{ "selected" if tr.settlement_status == "simulated" }}>simulated</option>
+          <option value="external_paid" {{ "selected" if tr.settlement_status == "external_paid" }}>external_paid</option>
+        </select>
+        <button class="secondary" type="submit">Record Settlement</button>
+      </form>
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="7" class="muted">No Trades yet.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}
