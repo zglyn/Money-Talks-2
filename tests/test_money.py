@@ -395,15 +395,15 @@ def test_ledger_fingerprint_is_stable_across_a_noop(world):
     assert money.audit_steps(world.conn, op.id).count("fingerprint_ok") == 1
 
 
-def test_reconcile_fails_when_a_grant_tamper_drifts_the_fingerprint(world):
+def test_reconcile_fails_when_an_unexplained_ledger_row_drifts_the_fingerprint(world):
     money.grant(world.conn, world.a, 3_000, now=NOW)
-    op = money.create_return(world.conn, world.program_id, world.a, 1_000, "fp-grant", now=NOW)
+    op = money.create_return(world.conn, world.program_id, world.a, 1_000, "fp-extra", now=NOW)
     money.reserve_funds(world.conn, op.id, now=NOW)
     money.apply_reallocation_v2(world.conn, op.id, now=NOW)
     world.conn.execute(
-        "UPDATE issuer_ledger SET amount_cents = amount_cents + 1"
-        " WHERE team_id = ? AND kind = 'grant'",
-        (world.a,),
+        "INSERT INTO issuer_ledger (program_id, team_id, amount_cents, kind, created_at)"
+        " VALUES (?, ?, 1, 'transfer_in', ?)",
+        (world.program_id, world.b, NOW),
     )
 
     result = money.reconcile(world.conn, op.id, now=NOW)
