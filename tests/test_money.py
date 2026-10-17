@@ -82,7 +82,9 @@ def test_return_moves_credit_to_pool_and_reconciles(world):
     assert money.ledger_balance(world.conn, world.a) == 2_000
     assert money.ledger_balance(world.conn, world.pool) == 1_000
     assert money.available_balance(world.conn, world.a, NOW) == 2_000
-    assert money.audit_steps(world.conn, op.id) == ["created", "reserved", "applied", "reconciled"]
+    assert money.audit_steps(world.conn, op.id) == [
+        "created", "reserved", "applied", "fingerprint_ok", "reconciled",
+    ]
 
 
 def test_active_reservation_reduces_available_balance(world):
@@ -373,6 +375,75 @@ def test_reconcile_fails_when_ledger_disagrees_with_operation(world):
 
     assert not result.ok and "ledger_pair" in result.mismatches
     assert money.get_operation(world.conn, op.id).status is Status.FAILED
+
+
+def test_ledger_fingerprint_is_stable_across_a_noop(world):
+    money.grant(world.conn, world.a, 3_000, now=NOW)
+    first = money.ledger_fingerprint(world.conn, world.program_id)
+    assert first.ok
+    assert money.ledger_fingerprint(world.conn, world.program_id) == first
+
+    op = money.create_return(world.conn, world.program_id, world.a, 1_000, "fp-stable", now=NOW)
+    done = money.process_operation(world.conn, op.id, now=NOW)
+
+    assert done.status is Status.RECONCILED
+    after = money.ledger_fingerprint(world.conn, world.program_id)
+    assert after.ok and after.digest != first.digest
+    assert money.ledger_fingerprint(world.conn, world.program_id) == after
+    again = money.reconcile(world.conn, op.id, now=NOW)
+    assert again.ok and again.fingerprint == after
+    assert money.audit_steps(world.conn, op.id).count("fingerprint_ok") == 1
+
+
+def test_reconcile_fails_when_a_grant_tamper_drifts_the_fingerprint(world):
+    money.grant(world.conn, world.a, 3_000, now=NOW)
+    op = money.create_return(world.conn, world.program_id, world.a, 1_000, "fp-grant", now=NOW)
+    money.reserve_funds(world.conn, op.id, now=NOW)
+    money.apply_reallocation_v2(world.conn, op.id, now=NOW)
+    world.conn.execute(
+        "UPDATE issuer_ledger SET amount_cents = amount_cents + 1"
+        " WHERE team_id = ? AND kind = 'grant'",
+        (world.a,),
+    )
+
+    result = money.reconcile(world.conn, op.id, now=NOW)
+
+    assert result.mismatches == ("fingerprint_drift",)
+    assert result.fingerprint is not None and not result.fingerprint.ok
+    assert money.get_operation(world.conn, op.id).status is Status.FAILED
+    assert "fingerprint_drift" in money.audit_steps(world.conn, op.id)
+    drifted = money.ledger_fingerprint(world.conn, world.program_id)
+    assert not drifted.ok and drifted == result.fingerprint
+
+
+def test_operation_identity_tamper_drifts_the_fingerprint(world):
+    money.grant(world.conn, world.a, 3_000, now=NOW)
+    op = money.create_return(world.conn, world.program_id, world.a, 1_000, "fp-id", now=NOW)
+    done = money.process_operation(world.conn, op.id, now=NOW)
+    before = money.ledger_fingerprint(world.conn, world.program_id)
+    assert done.status is Status.RECONCILED and before.ok
+
+    world.conn.execute(
+        "UPDATE operations SET amount_cents = amount_cents + 1 WHERE id = ?", (done.id,)
+    )
+
+    after = money.ledger_fingerprint(world.conn, world.program_id)
+    assert not after.ok and after.digest != before.digest
+    reported = money.reconcile(world.conn, done.id, now=NOW)
+    assert not reported.ok and reported.mismatches == ("fingerprint_drift",)
+    assert money.get_operation(world.conn, done.id).status is Status.RECONCILED
+    money.reconcile(world.conn, done.id, now=NOW)
+    assert money.audit_steps(world.conn, done.id).count("fingerprint_drift") == 1
+
+
+def test_failed_reconcile_leaves_fingerprint_drift(world):
+    money.grant(world.conn, world.a, 3_000, now=NOW)
+    money.grant(world.conn, world.b, 4_500, now=NOW)
+    over_cap = move(world, "fp-v1-cap", world.a, world.b, 1_000, version="v1")
+
+    assert over_cap.status is Status.FAILED
+    assert "fingerprint_drift" in money.audit_steps(world.conn, over_cap.id)
+    assert not money.ledger_fingerprint(world.conn, world.program_id).ok
 
 
 def test_audit_events_cannot_be_updated_or_deleted(world):

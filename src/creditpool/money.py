@@ -5,6 +5,7 @@ Flag the Operation, release its Reservation, append an Audit Event, commit, and 
 failed `StepResult`, so a refusal never leaves half-applied Credit.
 """
 
+import hashlib
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -51,9 +52,19 @@ class StepResult:
 
 
 @dataclass(frozen=True)
+class LedgerFingerprint:
+    """Checksum over one Program's balances and the Operations that authorize them."""
+
+    program_id: int
+    digest: str
+    ok: bool
+
+
+@dataclass(frozen=True)
 class ReconcileResult:
     ok: bool
     mismatches: tuple[str, ...] = ()
+    fingerprint: LedgerFingerprint | None = None
 
 
 @dataclass(frozen=True)
@@ -122,6 +133,22 @@ def _audit(
         " VALUES (?, ?, ?, ?, ?)",
         (operation_id, actor, step, detail, now),
     )
+
+
+def _audit_fingerprint(
+    conn: sqlite3.Connection, operation_id: int, fingerprint: LedgerFingerprint, now: float
+) -> None:
+    """Record OK or drift once per digest. A retry of the same Reconcile appends nothing."""
+    step = "fingerprint_ok" if fingerprint.ok else "fingerprint_drift"
+    last = conn.execute(
+        "SELECT step, detail FROM allocation_events"
+        " WHERE operation_id = ? AND step IN ('fingerprint_ok', 'fingerprint_drift')"
+        " ORDER BY id DESC LIMIT 1",
+        (operation_id,),
+    ).fetchone()
+    if last is not None and last["step"] == step and last["detail"] == fingerprint.digest:
+        return
+    _audit(conn, operation_id, "system", step, fingerprint.digest, now)
 
 
 def _set_status(
@@ -563,25 +590,85 @@ def _mismatches(conn: sqlite3.Connection, op: Operation, now: float) -> list[str
     return list(dict.fromkeys(found))
 
 
+def ledger_fingerprint(conn: sqlite3.Connection, program_id: int) -> LedgerFingerprint:
+    """Checksum of Program and Team balances plus applied or reconciled Operation identity.
+
+    `ok` is false when those balances disagree with Grants plus that identity.
+    A failed Reconcile drops the Operation out of the identity, so leftover
+    Issuer Ledger rows read as drift.
+    """
+    _program(conn, program_id)
+    teams = conn.execute(
+        "SELECT id FROM teams WHERE program_id = ? ORDER BY id", (program_id,)
+    ).fetchall()
+    actual = [(row["id"], ledger_balance(conn, row["id"])) for row in teams]
+    expected = {team_id: 0 for team_id, _ in actual}
+    for row in conn.execute(
+        "SELECT team_id, amount_cents FROM issuer_ledger WHERE program_id = ? AND kind = 'grant'",
+        (program_id,),
+    ):
+        if row["team_id"] in expected:
+            expected[row["team_id"]] += row["amount_cents"]
+    ops = conn.execute(
+        "SELECT id, type, from_team_id, to_team_id, amount_cents FROM operations"
+        " WHERE program_id = ? AND status IN ('applied', 'reconciled') ORDER BY id",
+        (program_id,),
+    ).fetchall()
+    team_ids = set(expected)
+    for op in ops:
+        if op["from_team_id"] in team_ids:
+            expected[op["from_team_id"]] -= op["amount_cents"]
+        if op["to_team_id"] in team_ids:
+            expected[op["to_team_id"]] += op["amount_cents"]
+    total = program_total(conn, program_id)
+    ok = total == sum(balance for _, balance in actual) and all(
+        balance == expected[team_id] for team_id, balance in actual
+    )
+    lines = [f"program {program_id} {total}"]
+    lines.extend(f"team {team_id} {balance}" for team_id, balance in actual)
+    lines.extend(
+        f"operation {op['id']} {op['type']} {op['from_team_id']} {op['to_team_id']} {op['amount_cents']}"
+        for op in ops
+    )
+    digest = hashlib.sha256("\n".join(lines).encode()).hexdigest()
+    return LedgerFingerprint(program_id, digest, ok)
+
+
 def reconcile(
     conn: sqlite3.Connection, operation_id: int, now: float | None = None
 ) -> ReconcileResult:
-    """Verify Issuer Ledger, Operation, and Reservations agree. A mismatch fails the Operation."""
+    """Verify the Issuer Ledger, the Operation, and Reservations agree.
+
+    Ledger Fingerprint drift is a money failure. It fails an applied Operation.
+    A repeat on an already reconciled Operation reports drift and leaves the status.
+    """
     t = _now(now)
     with _tx(conn):
         op = _load(conn, operation_id)
         if op.status is Status.RECONCILED:
-            return ReconcileResult(True)
+            fp = ledger_fingerprint(conn, op.program_id)
+            if fp.ok:
+                return ReconcileResult(True, fingerprint=fp)
+            _audit_fingerprint(conn, op.id, fp, t)
+            return ReconcileResult(False, ("fingerprint_drift",), fp)
         if op.status is not Status.APPLIED:
-            return ReconcileResult(False, ("not_applied",))
+            return ReconcileResult(
+                False, ("not_applied",), ledger_fingerprint(conn, op.program_id)
+            )
         found = _mismatches(conn, op, t)
+        if not ledger_fingerprint(conn, op.program_id).ok and "fingerprint_drift" not in found:
+            found.append("fingerprint_drift")
         if found:
             _set_status(conn, op, Status.FAILED, t, flag_reason="reconcile_mismatch")
             _audit(conn, op.id, "system", "reconcile_failed", ",".join(found), t)
-            return ReconcileResult(False, tuple(found))
+            fp = ledger_fingerprint(conn, op.program_id)
+            _audit_fingerprint(conn, op.id, fp, t)
+            return ReconcileResult(False, tuple(found), fp)
         _set_status(conn, op, Status.RECONCILED, t)
+        fp = ledger_fingerprint(conn, op.program_id)
+        _audit_fingerprint(conn, op.id, fp, t)
         _audit(conn, op.id, "system", "reconciled", "", t)
-    return ReconcileResult(True)
+    return ReconcileResult(True, fingerprint=fp)
 
 
 def process_operation(
