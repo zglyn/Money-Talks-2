@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Team wallet · CreditPool{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Team wallet</h1>
+  <p>Return unused Credit to the Program Pool, or Request more from it.</p>
+</div>
+{% if not selected %}
+  <div class="panel"><p class="muted" style="margin:0">No Teams yet. Seed the demo from <a href="/demo">Demo control</a>.</p></div>
+{% else %}
+{% set program, team = selected %}
+<form method="get" action="/wallet" class="panel" style="padding-bottom:14px">
+  <label for="team_id">Team</label>
+  <select id="team_id" name="team_id" onchange="this.form.submit()">
+    {% for p, t in teams %}
+      <option value="{{ t.id }}" {{ "selected" if t.id == team.id }}>{{ p.name }} / {{ t.name }}</option>
+    {% endfor %}
+  </select>
+  <noscript><div class="actions"><button type="submit">Show</button></div></noscript>
+</form>
+
+<div class="grid">
+  <div class="stat"><div class="label">Ledger balance</div><div class="value">{{ team.ledger_cents|usd }}</div></div>
+  <div class="stat"><div class="label">Available</div><div class="value">{{ team.available_cents|usd }}</div><div class="muted" style="margin-top:6px">After Reservations</div></div>
+  <div class="stat"><div class="label">Eligibility</div><div class="value" style="font-size:1.35rem">{{ "Eligible" if team.eligible else "Not eligible" }}</div>
+    <div class="muted" style="margin-top:6px">Cap {{ program.per_team_cap_cents|usd }}{% if program.expired %} · expired{% endif %}</div></div>
+</div>
+
+{% if holds %}
+<h2>Active Reservations</h2>
+<table>
+  <tr><th>Operation</th><th>Type</th><th class="num">Held</th><th class="num">Expires in</th></tr>
+  {% for h in holds %}
+  <tr>
+    <td><a href="/audit?operation_id={{ h.operation_id }}">#{{ h.operation_id }}</a></td>
+    <td>{{ h.operation_type }}</td>
+    <td class="num">{{ h.amount_cents|usd }}</td>
+    <td class="num">{{ h.expires_at|secs_left(now) }}s</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+<div class="grid" style="margin-top:14px">
+  <form class="panel" method="post" action="/wallet/return">
+    <h2>Return to Pool</h2>
+    <input type="hidden" name="team_id" value="{{ team.id }}">
+    <input type="hidden" name="key" value="{{ key }}">
+    <label>Amount (USD)</label><input name="amount" value="25.00" inputmode="decimal">
+    <div class="actions"><button type="submit">Return Credit</button></div>
+  </form>
+  <form class="panel" method="post" action="/wallet/request">
+    <h2>Request from Pool</h2>
+    <input type="hidden" name="team_id" value="{{ team.id }}">
+    <input type="hidden" name="key" value="{{ key }}">
+    <label>Amount (USD)</label><input name="amount" value="25.00" inputmode="decimal">
+    <div class="actions"><button type="submit">Request Credit</button></div>
+  </form>
+</div>
+<p class="muted">Each submit carries an Idempotency Key. Process the queue on <a href="/operations">Operations</a>.</p>
+
+<h2>Recent Operations</h2>
+<table>
+  <tr><th>#</th><th>Type</th><th>From</th><th>To</th><th class="num">Amount</th><th>Status</th></tr>
+  {% for o in recent %}
+  <tr><td><a href="/audit?operation_id={{ o.id }}">{{ o.id }}</a></td><td>{{ o.type }}</td><td>{{ o.from_name }}</td><td>{{ o.to_name }}</td>
+    <td class="num">{{ o.amount_cents|usd }}</td><td><span class="tag {{ o.status }}">{{ o.status }}</span></td></tr>
+  {% else %}
+  <tr><td colspan="6" class="muted">None yet.</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% endblock %}

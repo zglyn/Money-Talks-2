@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Demo control · CreditPool{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Demo control</h1>
+  <p>Seed the MONEY TALKS Program, pin Nicrron, then run the safe reallocation batch.</p>
+</div>
+
+<div class="panel" style="border-color: rgba(15,118,110,0.35)">
+  <h2>Full demo</h2>
+  <p class="muted">Seeds sample data (if needed), inserts ~60 Operations, and processes them with the safe agent (reservations + Program Rules). Risky moves are Flagged; Reconciliation stays clean.</p>
+  <div class="actions">
+    <form method="post" action="/demo/run-full"><button type="submit">Seed and run batch</button></form>
+  </div>
+  {% if last_run %}
+  <div class="status-line ok" style="margin-top:14px">
+    Batch done · {{ last_run.operations }} Operations · flagged {{ last_run.outcomes.get('flagged', 0) }} · failed {{ last_run.outcomes.get('failed', 0) }} · mismatches {{ last_run.mismatch_teams }}
+  </div>
+  <p><a href="/reconciliation">Open Reconciliation →</a> · <a href="/operations">Operations →</a></p>
+  {% endif %}
+</div>
+
+<div class="grid">
+  <div class="panel">
+    <h2>Data</h2>
+    <div class="actions">
+      <form method="post" action="/demo/seed" class="inline"><button type="submit">Seed demo</button></form>
+      <form method="post" action="/demo/snapshot" class="inline"><button class="secondary" type="submit" {{ "disabled" if not seeded }}>Snapshot</button></form>
+      <form method="post" action="/demo/reset" class="inline"><button class="secondary" type="submit" {{ "disabled" if not has_snapshot }}>Reset</button></form>
+    </div>
+    <p class="muted">12 Teams, $260 Grant each, $600 cap, a Program Pool, and an expired Program.</p>
+  </div>
+  <div class="panel">
+    <h2>Pin model</h2>
+    <form method="post" action="/demo/model">
+      <label for="model">NICRRON_MODEL</label>
+      <input id="model" name="model" value="{{ pinned_model }}" placeholder="anthropic/claude-sonnet-4">
+      <div class="actions"><button type="submit">Pin for this process</button></div>
+    </form>
+    <p class="muted">Stable model for the recording. Needs <code>NICRRON_API_KEY</code> in <code>.env</code>.</p>
+  </div>
+  <div class="panel">
+    <h2>Run batch only</h2>
+    <div class="actions">
+      <form method="post" action="/demo/run"><button type="submit" {{ "disabled" if not seeded }}>Process batch</button></form>
+    </div>
+    <p class="muted">Uses existing seed. Safe agent only.</p>
+  </div>
+</div>
+
+<h2>Operation status</h2>
+<p>{% for s, n in counts.items() %}<span class="tag {{ s }}">{{ s }} {{ n }}</span> {% else %}<span class="muted">No Operations.</span>{% endfor %}</p>
+
+{% if last_run %}
+<h2>Last batch</h2>
+<table>
+  <tr><th>Submitted</th><th>Distinct</th><th>Duplicates</th><th>Outcomes</th><th>Fewest steps</th></tr>
+  <tr>
+    <td class="num">{{ last_run.submitted }}</td>
+    <td class="num">{{ last_run.operations }}</td>
+    <td class="num">{{ last_run.duplicates_collapsed }}</td>
+    <td>{% for k, v in last_run.outcomes.items() %}<span class="tag {{ k }}">{{ k }} {{ v }}</span> {% endfor %}</td>
+    <td class="num">{{ last_run.steps_min }}</td>
+  </tr>
+</table>
+{% endif %}
+
+<div class="panel" style="margin-top:28px">
+  <h2>Issuer handoff</h2>
+  <p class="muted" style="margin:0">
+    This demo’s Issuer Ledger is a stand-in for Nicrron’s own balances.
+    In production, Nicrron keeps the ledger; CreditPool is the reallocation agent,
+    Reservation, Reconcile, and Audit layer they run inside their system — not a public credit exchange.
+  </p>
+</div>
+{% endblock %}

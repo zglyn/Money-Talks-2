@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Reconciliation · CreditPool{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Reconciliation</h1>
+  <p>Issuer Ledger versus Operations and Reservations. Red means money failure.</p>
+</div>
+{% set ns = namespace(bad=0) %}
+{% for p in programs %}{% for t in p.teams %}{% if t.mismatches %}{% set ns.bad = ns.bad + 1 %}{% endif %}{% endfor %}{% endfor %}
+{% if ns.bad or failed %}
+  <div class="status-line bad">{{ ns.bad }} Team mismatch{{ "es" if ns.bad != 1 }} · {{ failed|length }} failed Reconcile</div>
+{% else %}
+  <div class="status-line ok">Clean — ledger, Operations, and Reservations agree</div>
+{% endif %}
+
+{% for p in programs %}
+<h2>{{ p.name }}</h2>
+{% if report.program_mismatches(p) %}<p class="bad">Program total {{ p.used_cents|usd }} exceeds budget {{ p.total_budget_cents|usd }}.</p>{% endif %}
+<table>
+  <tr><th>Team</th><th class="num">Ledger</th><th class="num">Available</th><th>Mismatch</th></tr>
+  {% for t in p.teams %}
+  <tr class="{{ 'bad' if t.mismatches }}">
+    <td>{{ t.name }}</td><td class="num">{{ t.ledger_cents|usd }}</td><td class="num">{{ t.available_cents|usd }}</td>
+    <td>{% if t.mismatches %}<strong>{{ t.mismatches|join(", ") }}</strong>{% else %}<span class="muted">ok</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endfor %}
+
+<h2>Failed Reconcile</h2>
+<table>
+  <tr><th>#</th><th>Type</th><th class="num">Amount</th><th>Mismatch</th></tr>
+  {% for o in failed %}
+  <tr class="bad"><td><a href="/audit?operation_id={{ o.id }}">{{ o.id }}</a></td><td>{{ o.type }}</td>
+    <td class="num">{{ o.amount_cents|usd }}</td><td>{{ o.detail or "" }}</td></tr>
+  {% else %}
+  <tr><td colspan="4" class="muted">None.</td></tr>
+  {% endfor %}
+</table>
+<p class="muted"><code>ledger_vs_operations</code> means the ledger holds transfers that no applied or reconciled Operation accounts for.</p>
+{% endblock %}

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Audit log · CreditPool{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Audit log</h1>
+  <p>Append-only trail of every agent, Admin, and system step.</p>
+</div>
+<form method="get" action="/audit" class="panel" style="display:flex; flex-wrap:wrap; gap:12px; align-items:end;">
+  <div>
+    <label for="operation_id">Operation #</label>
+    <input id="operation_id" name="operation_id" style="width:8rem" value="{{ operation_id if operation_id is not none else '' }}">
+  </div>
+  <div class="actions" style="margin:0">
+    <button type="submit">Filter</button>
+    {% if operation_id is not none %}<a href="/audit">Clear</a>{% endif %}
+    <a class="muted" href="/audit.csv{% if operation_id is not none %}?operation_id={{ operation_id }}{% endif %}">Export CSV</a>
+  </div>
+</form>
+<p class="muted">Append-only. {{ "Showing the latest 500 events." if operation_id is none else "Showing one Operation." }}</p>
+<table>
+  <tr><th>Event</th><th>Operation</th><th>Time</th><th>Actor</th><th>Step</th><th>Detail</th></tr>
+  {% for e in events %}
+  <tr><td>{{ e.id }}</td><td><a href="/audit?operation_id={{ e.operation_id }}">{{ e.operation_id }}</a></td>
+    <td>{{ e.created_at|when }}</td><td>{{ e.actor }}</td><td>{{ e.step }}</td><td>{{ e.detail }}</td></tr>
+  {% else %}
+  <tr><td colspan="6" class="muted">No events.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

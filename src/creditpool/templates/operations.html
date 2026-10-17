@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Operations · CreditPool{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Operations</h1>
+  <p>Live queue of Returns and Reallocates. Claim and process requested work here.</p>
+</div>
+<p>
+  {% for s, n in counts.items() %}<span class="tag {{ s }}">{{ s }} {{ n }}</span> {% endfor %}
+  {% if not counts %}<span class="muted">No Operations.</span>{% endif %}
+</p>
+<div class="actions">
+  <form method="get" action="/operations" class="inline">
+    <select name="status" onchange="this.form.submit()">
+      <option value="">all statuses</option>
+      {% for s in statuses %}<option value="{{ s }}" {{ "selected" if s == status }}>{{ s }}</option>{% endfor %}
+    </select>
+  </form>
+  <form method="post" action="/operations/process" class="inline">
+    <button type="submit">Process requested</button>
+  </form>
+</div>
+<p class="muted">Processing claims requested Operations and runs the agent for the current Agent Version.</p>
+
+{% if flagged %}
+<h2>Flagged — Admin resolve</h2>
+<table>
+  <tr><th>#</th><th>Reason</th><th></th></tr>
+  {% for o in flagged %}
+  <tr>
+    <td><a href="/audit?operation_id={{ o.id }}">{{ o.id }}</a> · {{ o.from_name }} → {{ o.to_name }} · {{ o.amount_cents|usd }}</td>
+    <td>{{ o.flag_reason or "" }}</td>
+    <td>
+      <form method="post" action="/admin/resolve" class="inline">
+        <input type="hidden" name="operation_id" value="{{ o.id }}"><input type="hidden" name="action" value="retry">
+        <button class="secondary" type="submit">Retry</button>
+      </form>
+      <form method="post" action="/admin/resolve" class="inline">
+        <input type="hidden" name="operation_id" value="{{ o.id }}"><input type="hidden" name="action" value="reject">
+        <button class="secondary" type="submit">Reject</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+<table>
+  <tr><th>#</th><th>Program</th><th>Type</th><th>From</th><th>To</th><th class="num">Amount</th><th>Status</th><th>Agent</th><th>Claimed</th><th>Run</th><th>Reason</th></tr>
+  {% for o in operations %}
+  <tr class="{{ 'bad' if o.status == 'failed' }}">
+    <td><a href="/audit?operation_id={{ o.id }}">{{ o.id }}</a></td>
+    <td>{{ o.program_name }}</td><td>{{ o.type }}</td><td>{{ o.from_name }}</td><td>{{ o.to_name }}</td>
+    <td class="num">{{ o.amount_cents|usd }}</td>
+    <td><span class="tag {{ o.status }}">{{ o.status }}</span></td>
+    <td><span class="mono">{{ o.agent_version }}</span></td><td>{{ o.claimed_by or "—" }}</td>
+    <td>{% if o.trace_id %}{{ o.run_outcome }} <span class="muted" title="PRISM trace id">{{ o.trace_id[:8] }}</span>{% else %}—{% endif %}</td>
+    <td>{{ o.flag_reason or "" }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="11" class="muted">Nothing here.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

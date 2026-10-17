@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}CreditPool{% endblock %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Outfit:wght@400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0c1419;
+    --ink-soft: #1a2a33;
+    --foam: #eef6f4;
+    --paper: #f4f7f6;
+    --line: rgba(12, 20, 25, 0.12);
+    --muted: #5a6b73;
+    --teal: #0f766e;
+    --teal-deep: #0a4f4a;
+    --mint: #2dd4bf;
+    --coral: #c23b2a;
+    --coral-soft: #fdecea;
+    --amber: #b45309;
+    --amber-soft: #fff7ed;
+    --ok: #157a45;
+    --ok-soft: #e8f7ee;
+    --shadow: 0 18px 50px rgba(12, 20, 25, 0.08);
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    color: var(--ink);
+    font: 15px/1.5 Outfit, sans-serif;
+    background:
+      radial-gradient(1200px 600px at 10% -10%, rgba(45, 212, 191, 0.18), transparent 55%),
+      radial-gradient(900px 500px at 100% 0%, rgba(15, 118, 110, 0.14), transparent 50%),
+      linear-gradient(180deg, #e8f0ee 0%, var(--paper) 38%, #eef2f1 100%);
+    background-attachment: fixed;
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.35;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/%3E%3C/svg%3E");
+    mix-blend-mode: multiply;
+    z-index: 0;
+  }
+  .shell { position: relative; z-index: 1; }
+
+  .top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 18px 28px;
+    padding: 18px 28px 14px;
+    border-bottom: 1px solid var(--line);
+    backdrop-filter: blur(10px);
+    background: rgba(244, 247, 246, 0.72);
+  }
+  .brand {
+    font-family: Syne, sans-serif;
+    font-weight: 800;
+    font-size: clamp(1.55rem, 2.4vw, 1.9rem);
+    letter-spacing: -0.03em;
+    line-height: 1;
+    color: var(--ink);
+    text-decoration: none;
+  }
+  .brand span {
+    display: inline-block;
+    width: 0.42em;
+    height: 0.42em;
+    margin-right: 0.28em;
+    border-radius: 3px;
+    background: linear-gradient(135deg, var(--mint), var(--teal));
+    transform: translateY(-0.08em);
+    box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.25);
+  }
+  nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 2px;
+    flex: 1;
+  }
+  nav a {
+    position: relative;
+    padding: 8px 12px;
+    color: var(--ink-soft);
+    text-decoration: none;
+    font-weight: 500;
+    font-size: 14px;
+    border-radius: 999px;
+    transition: background 160ms ease, color 160ms ease;
+  }
+  nav a:hover { background: rgba(15, 118, 110, 0.08); color: var(--teal-deep); }
+  nav a.active {
+    background: var(--ink);
+    color: #f3fffc;
+  }
+  .ver {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    color: var(--muted);
+    padding: 7px 11px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: rgba(255,255,255,0.55);
+  }
+  .ver strong { color: var(--teal-deep); font-weight: 500; }
+
+  main {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 28px 22px 64px;
+    animation: rise 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    main { animation: none; }
+    * { transition: none !important; }
+  }
+
+  .page-head { margin-bottom: 22px; max-width: 40rem; }
+  .page-head h1 {
+    font-family: Syne, sans-serif;
+    font-weight: 700;
+    font-size: clamp(1.75rem, 3vw, 2.25rem);
+    letter-spacing: -0.03em;
+    margin: 0 0 8px;
+    line-height: 1.15;
+  }
+  .page-head p { margin: 0; color: var(--muted); font-size: 15.5px; }
+  h2 {
+    font-family: Syne, sans-serif;
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 28px 0 10px;
+  }
+
+  .panel {
+    background: rgba(255,255,255,0.78);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 18px 18px 16px;
+    margin-bottom: 16px;
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(8px);
+  }
+  .panel h2 { margin-top: 0; }
+  .stat {
+    background: linear-gradient(160deg, #ffffff 0%, #f3faf8 100%);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+  }
+  .stat .label {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .stat .value {
+    font-family: Syne, sans-serif;
+    font-size: clamp(1.6rem, 3vw, 2rem);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    margin-top: 6px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  table {
+    border-collapse: separate;
+    border-spacing: 0;
+    width: 100%;
+    background: rgba(255,255,255,0.85);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: 0; }
+  th {
+    background: rgba(15, 118, 110, 0.06);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-family: "IBM Plex Mono", monospace; font-size: 13px; }
+  tr.bad td { background: var(--coral-soft); color: var(--coral); }
+  a { color: var(--teal-deep); }
+  a:hover { color: var(--teal); }
+
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: rgba(12, 20, 25, 0.06);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11.5px;
+    font-weight: 500;
+  }
+  .tag.reconciled, .tag.applied { background: var(--ok-soft); color: var(--ok); }
+  .tag.flagged, .tag.reserved, .tag.requested { background: var(--amber-soft); color: var(--amber); }
+  .tag.failed { background: var(--coral-soft); color: var(--coral); }
+  .tag.processing { background: #e0f2fe; color: #075985; }
+
+  .msg {
+    background: linear-gradient(90deg, rgba(45, 212, 191, 0.18), rgba(15, 118, 110, 0.1));
+    border: 1px solid rgba(15, 118, 110, 0.25);
+    border-radius: 12px;
+    padding: 11px 14px;
+    margin-bottom: 18px;
+    animation: rise 300ms ease both;
+  }
+  .muted { color: var(--muted); }
+  .bad { color: var(--coral); font-weight: 600; }
+  .ok { color: var(--ok); font-weight: 600; }
+  .status-line {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border-radius: 12px;
+    margin-bottom: 16px;
+    font-weight: 600;
+  }
+  .status-line.ok { background: var(--ok-soft); color: var(--ok); }
+  .status-line.bad { background: var(--coral-soft); color: var(--coral); }
+
+  form.inline { display: inline-flex; gap: 8px; align-items: center; margin-right: 8px; vertical-align: middle; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0 4px; }
+  label { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; margin: 10px 0 4px; }
+  input, select {
+    padding: 9px 11px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    font: inherit;
+    background: #fff;
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+  }
+  select { width: auto; min-width: 12rem; }
+  button {
+    padding: 9px 16px;
+    border: 0;
+    background: linear-gradient(180deg, #149187, var(--teal-deep));
+    color: #f4fffc;
+    border-radius: 999px;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 8px 20px rgba(15, 118, 110, 0.22);
+    transition: transform 140ms ease, box-shadow 140ms ease, filter 140ms ease;
+  }
+  button:hover { filter: brightness(1.05); box-shadow: 0 10px 24px rgba(15, 118, 110, 0.28); }
+  button:active { transform: translateY(1px) scale(0.98); }
+  button:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; filter: none; }
+  button.secondary {
+    background: #fff;
+    color: var(--teal-deep);
+    border: 1px solid rgba(15, 118, 110, 0.35);
+    box-shadow: none;
+  }
+  button.secondary:hover { background: rgba(15, 118, 110, 0.06); }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .steps { counter-reset: step; }
+  .steps .panel { position: relative; padding-top: 22px; }
+  .steps .panel::before {
+    counter-increment: step;
+    content: counter(step);
+    position: absolute;
+    top: 14px;
+    right: 16px;
+    font-family: Syne, sans-serif;
+    font-weight: 800;
+    font-size: 1.4rem;
+    color: rgba(15, 118, 110, 0.18);
+  }
+  code, .mono {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    background: rgba(12, 20, 25, 0.05);
+    padding: 2px 6px;
+    border-radius: 6px;
+  }
+
+  .card {
+    background: rgba(255,255,255,0.78);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 18px 18px 16px;
+    margin-bottom: 16px;
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(8px);
+  }
+  .card h2 { margin-top: 0; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <header class="top">
+    <a class="brand" href="/"><span></span>CreditPool</a>
+    <nav>
+      {% set path = request.url.path %}
+      <a href="/" class="{{ 'active' if path == '/' else '' }}">Program</a>
+      <a href="/wallet" class="{{ 'active' if path.startswith('/wallet') else '' }}">Wallet</a>
+      <a href="/operations" class="{{ 'active' if path.startswith('/operations') else '' }}">Operations</a>
+      <a href="/reconciliation" class="{{ 'active' if path.startswith('/reconciliation') else '' }}">Reconcile</a>
+      <a href="/audit" class="{{ 'active' if path.startswith('/audit') else '' }}">Audit</a>
+      <a href="/demo" class="{{ 'active' if path.startswith('/demo') else '' }}">Demo</a>
+    </nav>
+    <span class="ver">safe agent</span>
+  </header>
+  <main>
+    {% if msg %}<div class="msg">{{ msg }}</div>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+</body>
+</html>

@@ -1,0 +1,13 @@
+__pycache__/
+.pytest_cache/
+*.egg-info/
+*.db
+*.db-wal
+*.db-shm
+*.snapshot
+.env
+.env.local
+*.pem
+.scratch/prism-handshake.json
+
+.audit/

@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Program console · CreditPool{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Program console</h1>
+  <p>Budget, caps, Team balances, and Admin Reallocate on the Issuer Ledger.</p>
+</div>
+{% if not programs %}
+  <div class="panel">
+    <p class="muted" style="margin:0">No Programs yet. Open <a href="/demo">Demo control</a> and seed the demo.</p>
+  </div>
+{% endif %}
+{% for p in programs %}
+<section class="panel">
+  <h2>{{ p.name }}
+    {% if p.expired %}<span class="tag failed">expired</span>{% else %}<span class="tag reconciled">active</span>{% endif %}
+  </h2>
+  <div class="grid" style="margin-bottom:14px">
+    <div class="stat"><div class="label">Budget</div><div class="value">{{ p.total_budget_cents|usd }}</div></div>
+    <div class="stat"><div class="label">Allocated</div><div class="value">{{ p.used_cents|usd }}</div></div>
+    <div class="stat"><div class="label">Remaining</div><div class="value">{{ p.remaining_cents|usd }}</div></div>
+    <div class="stat"><div class="label">Per-Team cap</div><div class="value">{{ p.per_team_cap_cents|usd }}</div></div>
+  </div>
+  <p class="muted">Expires {{ p.expires_at|when }} · Returns {{ "allowed" if p.returns_allowed else "disabled" }}</p>
+  {% if report.program_mismatches(p) %}<p class="bad">Program total exceeds budget.</p>{% endif %}
+  <table>
+    <tr><th>Team</th><th>Eligible</th><th class="num">Ledger</th><th class="num">Available</th><th></th></tr>
+    {% for t in p.teams %}
+    <tr class="{{ 'bad' if t.mismatches }}">
+      <td>{% if t.is_pool %}<strong>{{ t.name }}</strong> <span class="tag">pool</span>{% else %}<a href="/wallet?team_id={{ t.id }}">{{ t.name }}</a>{% endif %}</td>
+      <td>{{ "yes" if t.eligible else "no" }}</td>
+      <td class="num">{{ t.ledger_cents|usd }}</td>
+      <td class="num">{{ t.available_cents|usd }}</td>
+      <td>{{ t.mismatches|join(", ") }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+
+  {% if not p.expired %}
+  <h2>Admin Reallocate (Team → Team)</h2>
+  <form method="post" action="/admin/reallocate" class="grid" style="align-items:end">
+    <input type="hidden" name="program_id" value="{{ p.id }}">
+    <input type="hidden" name="key" value="{{ key }}">
+    <div>
+      <label>From</label>
+      <select name="from_team_id">
+        {% for t in p.teams %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div>
+      <label>To</label>
+      <select name="to_team_id">
+        {% for t in p.teams %}<option value="{{ t.id }}" {{ "selected" if loop.index0 == 1 }}>{{ t.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div>
+      <label>Amount (USD)</label>
+      <input name="amount" value="50.00" inputmode="decimal">
+    </div>
+    <div class="actions" style="margin:0"><button type="submit">Queue Reallocate</button></div>
+  </form>
+  {% endif %}
+</section>
+{% endfor %}
+
+{% if flagged %}
+<section class="panel">
+  <h2>Flagged Operations</h2>
+  <p class="muted">Retry requeues for the agent; reject marks failed.</p>
+  <table>
+    <tr><th>#</th><th>Type</th><th>From</th><th>To</th><th class="num">Amount</th><th>Reason</th><th></th></tr>
+    {% for o in flagged %}
+    <tr>
+      <td><a href="/audit?operation_id={{ o.id }}">{{ o.id }}</a></td>
+      <td>{{ o.type }}</td><td>{{ o.from_name }}</td><td>{{ o.to_name }}</td>
+      <td class="num">{{ o.amount_cents|usd }}</td><td>{{ o.flag_reason or "" }}</td>
+      <td>
+        <form method="post" action="/admin/resolve" class="inline">
+          <input type="hidden" name="operation_id" value="{{ o.id }}">
+          <input type="hidden" name="action" value="retry">
+          <button type="submit" class="secondary">Retry</button>
+        </form>
+        <form method="post" action="/admin/resolve" class="inline">
+          <input type="hidden" name="operation_id" value="{{ o.id }}">
+          <input type="hidden" name="action" value="reject">
+          <button type="submit" class="secondary">Reject</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "creditpool"
+version = "0.1.0"
+description = "CreditPool: issuer-controlled reallocation of program credits (simulated Issuer Ledger)."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "jinja2",
+    "python-multipart",
+    "httpx",
+    "pytest",
+    "python-dotenv",
+]
+
+[project.optional-dependencies]
+nicrron = ["openai"]
+prism = ["prismtrace-sdk>=0.5.1"]
+
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+creditpool = ["templates/*.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
